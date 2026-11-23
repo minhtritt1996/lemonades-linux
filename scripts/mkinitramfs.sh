@@ -6,12 +6,12 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 OUT=${1:-$ROOT/build/out/initrd.cpio.gz}
 CC=${CC:-${CROSS_COMPILE:-aarch64-linux-gnu-}gcc}
-TMP="$ROOT/build/initramfs"
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
 
 command -v "$CC" >/dev/null || { echo "mkinitramfs: $CC not found" >&2; exit 1; }
 command -v cpio >/dev/null || { echo "mkinitramfs: cpio not found" >&2; exit 1; }
 
-rm -rf "$TMP"
 mkdir -p "$TMP/dev" "$TMP/proc" "$TMP/sys" "$TMP/tmp" "$TMP/run" "$TMP/mnt" \
 	 "$TMP/newroot" "$TMP/sys/fs/pstore" "$TMP/sys/kernel/config"
 mkdir -p "$TMP/var/lib/tqftpserv/readonly" "$TMP/var/lib/tqftpserv/readwrite" \

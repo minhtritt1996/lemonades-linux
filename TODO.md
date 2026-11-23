@@ -11,8 +11,10 @@
 - [x] **Droidloom + Incus + Security**: Built-in Kconfig cho Droidloom & Incus, `subuid`/`subgid` tự chuẩn hoá, SSH key-only (`PermitRootLogin prohibit-password`, `PasswordAuthentication no`), A/B deploy thống nhất qua `scripts/flash-boot-ab.sh` + `fastboot --set-active` (cấm `qbootctl -s`).
 
 ## Các hạng mục còn lại
-- [ ] **Suspend / Resume (`s2idle`)**: Kiểm tra wakeup IRQs, `hexagonrpcd` `systemd-sleep` hook và mức tiêu thụ điện khi ngủ sâu.
 - [ ] **SLPI / Cảm biến vật lý**: SLPI đã boot sạch và `hexagonrpcd` đọc/ghi xong registry, nhưng `ssccli` chưa thấy accel/gyro — cần tiếp tục đối chiếu cấu hình sensor registry / QMI SSC.
 - [ ] **GNSS / Location**: Tích hợp QMI LOC (`picasso-gnss`) + cầu nối `org.dmail.Location1`.
 - [ ] **Haptics / Camera / Flash**: Driver rung I2C `aw8697` (`i2c11 @ 0x5a`, reset GPIO 35), camera sensors (CAMSS / libcamera) và flash LED `pm8150l`.
 - [ ] **Residual đã biết (không ảnh hưởng sử dụng)**: 10 dòng SMMU context fault một lần lúc bàn giao splash framebuffer từ ABL sang DPU; MHI/SDX55 modem chưa có firmware mainline.
+
+## Ngoài phạm vi (máy chủ 24/7)
+- **Suspend / Resume (`s2idle`)**: Không thuộc mục tiêu vận hành máy chủ cắm nguồn PD 24/7 (chỉ xem xét nếu sau này chuyển sang dùng cầm tay chạy pin).

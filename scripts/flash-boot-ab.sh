@@ -31,12 +31,13 @@ done
 ssh_do() { ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "$HOST" "$@"; }
 
 [ -f "$IMG" ] || { echo "ERROR: missing $IMG" >&2; exit 1; }
-if [ ! -f "$DTBO_IMG" ] && [ -f "$(dirname "$IMG")/dtbo.img" ]; then
+if [ -f "$(dirname "$IMG")/dtbo.img" ]; then
 	DTBO_IMG="$(dirname "$IMG")/dtbo.img"
 fi
 
 # Validate boot.img v2 header (magic, page_size=4096, header_version=2) & 96 MiB limit.
 size=$(stat -c %s "$IMG")
+[ "$size" -gt 0 ] || { echo "ERROR: $IMG is empty" >&2; exit 1; }
 [ "$size" -le 100663296 ] || { echo "ERROR: $IMG ($size bytes) exceeds 96 MiB boot partition" >&2; exit 1; }
 python3 - "$IMG" <<'PY'
 import struct, sys
@@ -75,7 +76,7 @@ echo "host         : $HOST"
 
 # Preflight DTBO check BEFORE writing boot$other: must be either all-zeroed OR
 # match the generated empty dtbo.img (fail closed if read fails or DTBO_IMG is missing).
-dtbo_hdr=$(ssh_do "set -o pipefail; head -c 64 /dev/disk/by-partlabel/dtbo$other | od -An -v -tx1 | tr -d ' \n'")
+dtbo_hdr=$(ssh_do "test -r /dev/disk/by-partlabel/dtbo$other && head -c 64 /dev/disk/by-partlabel/dtbo$other | od -An -v -tx1 | tr -d ' \n'")
 if [ "${#dtbo_hdr}" -ne 128 ] || [[ "$dtbo_hdr" == *[!0-9a-fA-F]* ]]; then
 	echo "ERROR: failed to read 64-byte header from dtbo$other (got ${#dtbo_hdr} hex chars)" >&2
 	exit 1
@@ -84,8 +85,9 @@ case "$dtbo_hdr" in
 d7b7ab1e*)
 	[ -f "$DTBO_IMG" ] || { echo "ERROR: dtbo$other has DTBO magic but $DTBO_IMG is missing to verify it" >&2; exit 1; }
 	dtbo_sz=$(stat -c %s "$DTBO_IMG")
+	[ "$dtbo_sz" -gt 0 ] || { echo "ERROR: $DTBO_IMG is empty" >&2; exit 1; }
 	dtbo_local=$(sha256sum "$DTBO_IMG" | cut -d' ' -f1)
-	dtbo_remote=$(ssh_do "set -o pipefail; head -c $dtbo_sz /dev/disk/by-partlabel/dtbo$other | sha256sum" | cut -d' ' -f1)
+	dtbo_remote=$(ssh_do "test -r /dev/disk/by-partlabel/dtbo$other && head -c $dtbo_sz /dev/disk/by-partlabel/dtbo$other | sha256sum" | cut -d' ' -f1)
 	[ "${#dtbo_remote}" -eq 64 ] && [ "$dtbo_remote" = "$dtbo_local" ] || { echo "ERROR: dtbo$other contains non-empty vendor DTBO (flash empty dtbo.img once via fastboot)" >&2; exit 1; }
 	;;
 *[!0]*)
@@ -104,8 +106,8 @@ remote_sha=$(ssh_do sha256sum /tmp/boot.img | cut -d' ' -f1)
 [ "$remote_sha" = "$sha" ] || { echo "ERROR: copy sha mismatch ($remote_sha)" >&2; exit 1; }
 
 ssh_do "trap 'rm -f /tmp/boot.img' EXIT; dd if=/tmp/boot.img of=/dev/disk/by-partlabel/boot$other bs=4M conv=fsync status=none && sync"
-back_sha=$(ssh_do "set -o pipefail; head -c $size /dev/disk/by-partlabel/boot$other | sha256sum" | cut -d' ' -f1)
-[ "$back_sha" = "$sha" ] || { echo "ERROR: readback sha mismatch ($back_sha)" >&2; exit 1; }
+back_sha=$(ssh_do "test -r /dev/disk/by-partlabel/boot$other && head -c $size /dev/disk/by-partlabel/boot$other | sha256sum" | cut -d' ' -f1)
+[ "${#back_sha}" -eq 64 ] && [ "$back_sha" = "$sha" ] || { echo "ERROR: readback sha mismatch ($back_sha)" >&2; exit 1; }
 
 # Do NOT call `qbootctl -s`: upstream linux-msm/qbootctl (bootctrl_impl.c:551-558)
 # swaps TypeGUIDs in the opposite direction of the Active flag on LUN 4, leaving

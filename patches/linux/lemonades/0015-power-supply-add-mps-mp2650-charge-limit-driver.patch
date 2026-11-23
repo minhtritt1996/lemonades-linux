@@ -30,10 +30,10 @@ index f3c0d1006..6098d5acd 100644
  obj-$(CONFIG_CHARGER_MAX77759)	+= max77759_charger.o
 diff --git a/drivers/power/supply/mps_mp2650_charger.c b/drivers/power/supply/mps_mp2650_charger.c
 new file mode 100644
-index 000000000..4269b5f78
+index 000000000..6bcce6256
 --- /dev/null
 +++ b/drivers/power/supply/mps_mp2650_charger.c
-@@ -0,0 +1,412 @@
+@@ -0,0 +1,420 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Monolithic Power Systems MP2650 2S Buck-Boost Charge Limit & Bypass Driver
@@ -183,11 +183,15 @@ index 000000000..4269b5f78
 +	struct mp2650_charger *chg =
 +		container_of(work, struct mp2650_charger, poll_work.work);
 +	bool changed = false;
++	int ret;
 +
 +	mutex_lock(&chg->lock);
 +	/* Keep watchdog disabled in case adapter replug reset MP2650 */
-+	mp2650_update_bits(chg->client, MP2650_REG_CTRL1,
-+			   MP2650_WTD_TIMER_MASK, 0);
++	ret = mp2650_update_bits(chg->client, MP2650_REG_CTRL1,
++				 MP2650_WTD_TIMER_MASK, 0);
++	if (ret < 0)
++		dev_warn_ratelimited(&chg->client->dev,
++				     "failed to disable watchdog: %d\n", ret);
 +	mp2650_evaluate_locked(chg, &changed);
 +	mutex_unlock(&chg->lock);
 +
@@ -369,7 +373,7 @@ index 000000000..4269b5f78
 +{
 +	struct power_supply_config psy_cfg = {};
 +	struct mp2650_charger *chg;
-+	int reg08, reg13;
++	int reg08, reg13, ret;
 +
 +	reg08 = i2c_smbus_read_byte_data(client, MP2650_REG_CTRL0);
 +	if (reg08 < 0)
@@ -393,7 +397,11 @@ index 000000000..4269b5f78
 +	INIT_DELAYED_WORK(&chg->poll_work, mp2650_poll_work);
 +
 +	/* Disable I2C watchdog so CHG_EN=0 persists indefinitely */
-+	mp2650_update_bits(client, MP2650_REG_CTRL1, MP2650_WTD_TIMER_MASK, 0);
++	ret = mp2650_update_bits(client, MP2650_REG_CTRL1,
++				 MP2650_WTD_TIMER_MASK, 0);
++	if (ret < 0)
++		dev_warn(&client->dev,
++			 "failed to disable watchdog: %d\n", ret);
 +
 +	psy_cfg.drv_data = chg;
 +	psy_cfg.fwnode = dev_fwnode(&client->dev);

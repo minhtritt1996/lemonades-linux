@@ -23,6 +23,8 @@ LINUX_UP="$UP/linux"
 
 LINUX_REV=$(awk '/^[[:space:]]*revision:/ {print $2; exit}' "$PATCHES/UPSTREAM")
 [ -n "$LINUX_REV" ] || { echo "ERROR: cannot parse revision from $PATCHES/UPSTREAM" >&2; exit 1; }
+LINUX_TAG=$(awk '/^[[:space:]]*tag:/ {print $2; exit}' "$PATCHES/UPSTREAM")
+[ -n "$LINUX_TAG" ] || { echo "ERROR: cannot parse tag from $PATCHES/UPSTREAM" >&2; exit 1; }
 
 CROSS="${CROSS_COMPILE:-aarch64-linux-gnu-}"
 JOBS="${JOBS:-$(nproc)}"
@@ -37,7 +39,7 @@ usage() {
 
 verify_upstream() {
 	local rev
-	[ -d "$LINUX_UP/.git" ] || die "missing $LINUX_UP (git clone --branch v7.3.5 --depth 1 https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git upstream/linux)"
+	[ -d "$LINUX_UP/.git" ] || die "missing $LINUX_UP (git clone --branch $LINUX_TAG --depth 1 https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git upstream/linux)"
 	rev=$(git -C "$LINUX_UP" rev-parse HEAD)
 	[ "$rev" = "$LINUX_REV" ] || die "upstream/linux HEAD is $rev, expected $LINUX_REV"
 	[ -z "$(git -C "$LINUX_UP" status --porcelain)" ] || die "upstream/linux is modified"
@@ -193,7 +195,7 @@ check_tree() {
 	make -C "$tmp/linux" O="$tmp/out" ARCH=arm64 CROSS_COMPILE="$CROSS" -j"$JOBS" \
 		Image.gz qcom/sm8250-oneplus-lemonades.dtb
 	echo "==> Check: validating initramfs + Charge Limit GUI + boot.img v2 + dtbo.img"
-	python3 -m py_compile "$ROOT/initramfs/charge-gui/lemonades-charge-gui"
+	python3 -B -c "import py_compile; py_compile.compile('$ROOT/initramfs/charge-gui/lemonades-charge-gui', cfile='$tmp/out/charge-gui.pyc', doraise=True)"
 	CROSS_COMPILE="$CROSS" "$ROOT/scripts/mkinitramfs.sh" "$tmp/out/initrd.cpio.gz"
 	python3 "$ROOT/scripts/build-bootimg.py" \
 		--kernel "$tmp/out/arch/arm64/boot/Image.gz" \

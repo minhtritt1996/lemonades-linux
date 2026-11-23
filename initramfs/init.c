@@ -669,9 +669,12 @@ static void ensure_charge_limit_app(void)
 	if (chmod("/newroot/etc/lemonades", 0755) != 0) {}
 	if (chmod("/newroot/etc/lemonades/charge-limit", 0755) != 0) {}
 	if (access("/newroot/etc/lemonades/charge-limit/charge-limit.conf", F_OK) != 0) {
-		static const char def_conf[] = "START=75\nEND=80\nBEHAVIOUR=auto\n";
-		write_newroot_file("/newroot/etc/lemonades/charge-limit/charge-limit.conf",
-				   def_conf, sizeof(def_conf) - 1);
+		if (rename("/newroot/etc/lemonades/charge-limit.conf",
+			   "/newroot/etc/lemonades/charge-limit/charge-limit.conf") != 0) {
+			static const char def_conf[] = "START=75\nEND=80\nBEHAVIOUR=auto\n";
+			write_newroot_file("/newroot/etc/lemonades/charge-limit/charge-limit.conf",
+					   def_conf, sizeof(def_conf) - 1);
+		}
 	}
 	if (chmod("/newroot/etc/lemonades/charge-limit/charge-limit.conf", 0660) != 0) {}
 
