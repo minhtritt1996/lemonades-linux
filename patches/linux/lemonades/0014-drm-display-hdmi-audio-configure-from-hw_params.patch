@@ -1,0 +1,18 @@
+diff --git a/drivers/gpu/drm/display/drm_hdmi_audio_helper.c b/drivers/gpu/drm/display/drm_hdmi_audio_helper.c
+index 7d78b02c1..e2d889ba1 100644
+--- a/drivers/gpu/drm/display/drm_hdmi_audio_helper.c
++++ b/drivers/gpu/drm/display/drm_hdmi_audio_helper.c
+@@ -130,7 +130,12 @@ EXPORT_SYMBOL(drm_connector_hdmi_audio_plugged_notify);
+ 
+ static const struct hdmi_codec_ops drm_connector_hdmi_audio_ops = {
+ 	.audio_startup = drm_connector_hdmi_audio_startup,
+-	.prepare = drm_connector_hdmi_audio_prepare,
++	/*
++	 * Configure sink audio during hw_params so the DP/HDMI audio engine
++	 * and clocks are active before CPU DAI prepare (e.g. Qualcomm Q6AFE
++	 * DISPLAY_PORT_RX port 0x6020) starts the AFE port.
++	 */
++	.hw_params = drm_connector_hdmi_audio_prepare,
+ 	.audio_shutdown = drm_connector_hdmi_audio_shutdown,
+ 	.mute_stream = drm_connector_hdmi_audio_mute_stream,
+ 	.get_eld = drm_connector_hdmi_audio_get_eld,

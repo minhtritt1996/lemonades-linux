@@ -497,6 +497,113 @@ static void ensure_ssh_access(void)
 	log_kmsg("lemonades-init: sshd drop-in ensured (ListenAddress 0.0.0.0)\n");
 }
 
+static void write_newroot_file(const char *path, const char *content, size_t len)
+{
+	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+	if (fd < 0)
+		return;
+	if (write(fd, content, len) < 0) {}
+	close(fd);
+}
+
+/*
+ * Ensure ALSA UCM2 profiles (Stereo Speakers via TFA9874 + DisplayPort/HDMI
+ * Audio) and WirePlumber S16LE/non-mmap rules exist in /newroot so audio works
+ * out of the box even after a fresh userdata flash.
+ */
+static void ensure_audio_config(void)
+{
+	static const char ucm_card[] =
+		"Syntax 3\n\n"
+		"SectionUseCase.\"HiFi\" {\n"
+		"\tFile \"/Qualcomm/sm8250/OnePlus9R-HiFi.conf\"\n"
+		"\tComment \"Stereo Speakers\"\n"
+		"}\n\n"
+		"SectionUseCase.\"HDMI\" {\n"
+		"\tFile \"/Qualcomm/sm8250/OnePlus9R-HDMI.conf\"\n"
+		"\tComment \"DisplayPort / HDMI Audio\"\n"
+		"}\n";
+	static const char ucm_hifi[] =
+		"SectionVerb {\n"
+		"\tEnableSequence [\n"
+		"\t\tcset \"name='TERT_MI2S_RX Audio Mixer MultiMedia1' 1\"\n"
+		"\t]\n\n"
+		"\tDisableSequence [\n"
+		"\t\tcset \"name='TERT_MI2S_RX Audio Mixer MultiMedia1' 0\"\n"
+		"\t]\n\n"
+		"\tValue {\n"
+		"\t\tTQ \"HiFi\"\n"
+		"\t}\n"
+		"}\n\n"
+		"SectionDevice.\"Speaker\" {\n"
+		"\tComment \"Stereo Speakers\"\n\n"
+		"\tValue {\n"
+		"\t\tPlaybackPriority 200\n"
+		"\t\tPlaybackPCM \"hw:${CardId},0\"\n"
+		"\t\tPlaybackRate 48000\n"
+		"\t\tPlaybackChannels 2\n"
+		"\t}\n"
+		"}\n";
+	static const char ucm_hdmi[] =
+		"SectionVerb {\n"
+		"\tEnableSequence [\n"
+		"\t\tcset \"name='DISPLAY_PORT_RX Audio Mixer MultiMedia2' 1\"\n"
+		"\t]\n\n"
+		"\tDisableSequence [\n"
+		"\t\tcset \"name='DISPLAY_PORT_RX Audio Mixer MultiMedia2' 0\"\n"
+		"\t]\n\n"
+		"\tValue {\n"
+		"\t\tTQ \"HiFi\"\n"
+		"\t}\n"
+		"}\n\n"
+		"SectionDevice.\"HDMI\" {\n"
+		"\tComment \"DisplayPort / HDMI Output\"\n\n"
+		"\tValue {\n"
+		"\t\tPlaybackPriority 200\n"
+		"\t\tPlaybackPCM \"hw:${CardId},1\"\n"
+		"\t\tPlaybackRate 48000\n"
+		"\t\tPlaybackChannels 2\n"
+		"\t}\n"
+		"}\n";
+	static const char wp_rule[] =
+		"# Written by lemonades initramfs: q6asm-dai needs S16LE and RW_INTERLEAVED.\n"
+		"monitor.alsa.rules = [\n"
+		"  {\n"
+		"    matches = [\n"
+		"      { node.name = \"~alsa_output.platform-sound.*\" }\n"
+		"    ]\n"
+		"    actions = {\n"
+		"      update-props = {\n"
+		"        audio.format = \"S16LE\"\n"
+		"        audio.rate = 48000\n"
+		"        audio.allowed-rates = [ 48000 ]\n"
+		"        api.alsa.period-size = 1024\n"
+		"        api.alsa.period-num = 4\n"
+		"        api.alsa.headroom = 1024\n"
+		"        api.alsa.disable-mmap = true\n"
+		"      }\n"
+		"    }\n"
+		"  }\n"
+		"]\n";
+
+	mkdir_p("/newroot/usr/share/alsa/ucm2/Qualcomm/sm8250");
+	mkdir_p("/newroot/usr/share/alsa/ucm2/conf.d/sm8250");
+	write_newroot_file("/newroot/usr/share/alsa/ucm2/Qualcomm/sm8250/SM8250-OnePlus-9R.conf",
+			   ucm_card, sizeof(ucm_card) - 1);
+	write_newroot_file("/newroot/usr/share/alsa/ucm2/Qualcomm/sm8250/OnePlus9R-HiFi.conf",
+			   ucm_hifi, sizeof(ucm_hifi) - 1);
+	write_newroot_file("/newroot/usr/share/alsa/ucm2/Qualcomm/sm8250/OnePlus9R-HDMI.conf",
+			   ucm_hdmi, sizeof(ucm_hdmi) - 1);
+	unlink("/newroot/usr/share/alsa/ucm2/conf.d/sm8250/SM8250-OnePlus-9R.conf");
+	if (symlink("../../Qualcomm/sm8250/SM8250-OnePlus-9R.conf",
+		    "/newroot/usr/share/alsa/ucm2/conf.d/sm8250/SM8250-OnePlus-9R.conf") != 0) {}
+
+	mkdir_p("/newroot/etc/wireplumber/wireplumber.conf.d");
+	write_newroot_file("/newroot/etc/wireplumber/wireplumber.conf.d/51-lemonades-audio.conf",
+			   wp_rule, sizeof(wp_rule) - 1);
+	log_kmsg("lemonades-init: ALSA UCM2 + WirePlumber S16LE rules ensured\n");
+}
+
 /*
  * Droidloom needs one contiguous subordinate UID/GID range for root (the cell
  * maps 300000..399999).  /etc/subuid and /etc/subgid ship empty on this image,
@@ -617,6 +724,7 @@ static int try_switch_root(void)
 
 	ensure_ssh_access();
 	ensure_subid_ranges();
+	ensure_audio_config();
 
 	/* Merge /lib/firmware (initramfs) + /newroot/usr/lib/firmware via read-only overlay */
 	if (access("/newroot/usr/lib/firmware", F_OK) == 0) {
@@ -642,8 +750,12 @@ static int try_switch_root(void)
 		write_file_str("/sys/bus/pci/drivers/ath11k_pci/unbind", "0000:01:00.0");
 		write_file_str("/sys/bus/pci/drivers/ath11k_pci/bind", "0000:01:00.0");
 	}
-	write_file_str("/sys/bus/serial/drivers/hci_uart_qca/unbind", "serial0-0");
-	write_file_str("/sys/bus/serial/drivers/hci_uart_qca/bind", "serial0-0");
+	/* Rebind Bluetooth in background so QCA UART retry timeouts do not stall boot by ~33s */
+	if (fork() == 0) {
+		write_file_str("/sys/bus/serial/drivers/hci_uart_qca/unbind", "serial0-0");
+		write_file_str("/sys/bus/serial/drivers/hci_uart_qca/bind", "serial0-0");
+		_exit(0);
+	}
 
 	/* Start SLPI remoteproc if offline (firmware mounted from modem_<slot>) */
 	{

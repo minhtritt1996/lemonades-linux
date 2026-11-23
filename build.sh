@@ -162,6 +162,10 @@ export_patches() {
 		arch/arm64/boot/dts/qcom/sm8250.dtsi
 	export_patch "lemonades/0012-misc-fastrpc-revert-client-id-regressions.patch" \
 		drivers/misc/fastrpc.c
+	export_patch "lemonades/0013-drm-msm-dpu-prefer-upper-lms-for-non-dsc.patch" \
+		drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
+	export_patch "lemonades/0014-drm-display-hdmi-audio-configure-from-hw_params.patch" \
+		drivers/gpu/drm/display/drm_hdmi_audio_helper.c
 }
 
 check_tree() {

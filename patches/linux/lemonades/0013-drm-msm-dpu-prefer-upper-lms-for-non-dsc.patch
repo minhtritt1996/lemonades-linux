@@ -1,0 +1,51 @@
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
+index 7e77d88f8..4127c4412 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
+@@ -366,6 +366,46 @@ static int _dpu_rm_reserve_lms(struct dpu_rm *rm,
+ 		return -EINVAL;
+ 	}
+ 
++	/*
++	 * Prefer upper layer mixers for non-DSC/non-DSPP displays (e.g. external
++	 * DisplayPort) so they do not steal LM_0/LM_1 (PP_0/PP_1) from DSC
++	 * primary panels across blank/unblank cycles on SM8250.
++	 */
++	if (!topology->num_dsc && !topology->num_dspp &&
++	    ARRAY_SIZE(rm->mixer_blks) >= 4) {
++		for (i = 2; i < ARRAY_SIZE(rm->mixer_blks) &&
++				lm_count < topology->num_lm; i++) {
++			if (!rm->mixer_blks[i])
++				continue;
++
++			lm_count &= ~1;
++			lm_idx[lm_count] = i;
++
++			if (!_dpu_rm_check_lm_and_get_connected_blks(rm, global_state,
++					crtc_id, i, &pp_idx[lm_count],
++					&dspp_idx[lm_count], topology))
++				continue;
++
++			++lm_count;
++
++			if (lm_count < topology->num_lm) {
++				int j = _dpu_rm_get_lm_peer(rm, i);
++
++				if (j < 0 || j < i || !rm->mixer_blks[j])
++					continue;
++
++				if (!_dpu_rm_check_lm_and_get_connected_blks(rm,
++						global_state, crtc_id, j,
++						&pp_idx[lm_count], &dspp_idx[lm_count],
++						topology))
++					continue;
++
++				lm_idx[lm_count] = j;
++				++lm_count;
++			}
++		}
++	}
++
+ 	/* Find a primary mixer */
+ 	for (i = 0; i < ARRAY_SIZE(rm->mixer_blks) &&
+ 			lm_count < topology->num_lm; i++) {
