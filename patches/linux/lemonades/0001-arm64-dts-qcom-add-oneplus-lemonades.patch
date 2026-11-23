@@ -1499,10 +1499,10 @@ index 000000000..d1ed5e164
 +};
 diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-lemonades.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-lemonades.dts
 new file mode 100644
-index 000000000..05bd7fd20
+index 000000000..520794b63
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-lemonades.dts
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,268 @@
 +// SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 +/*
 + * Copyright (c) 2026, The Linux Foundation.
@@ -1628,6 +1628,17 @@ index 000000000..05bd7fd20
 +				regulator-max-microvolt = <3400000>;
 +			};
 +		};
++	};
++};
++
++&i2c5 {
++	clock-frequency = <400000>;
++
++	status = "okay";
++
++	mp2650_charger: charger@5c {
++		compatible = "mps,mp2650-charger";
++		reg = <0x5c>;
 +	};
 +};
 +

@@ -444,7 +444,8 @@ static void ensure_ssh_access(void)
 	static const char conf[] =
 		"# Written by the lemonades initramfs on every boot.\n"
 		"ListenAddress 0.0.0.0\n"
-		"PermitRootLogin yes\n";
+		"PermitRootLogin prohibit-password\n"
+		"PasswordAuthentication no\n";
 	static const char key[] = "/newroot/root/.ssh/authorized_keys";
 	static const char backup[] = "/newroot/etc/lemonades/authorized_keys";
 	char buf[8192];
@@ -591,6 +592,82 @@ static void ensure_audio_config(void)
 }
 
 /*
+ * Install Charge Limit & Battery Bypass GUI, udev permissions, and boot-time
+ * restore service into /newroot so it survives userdata reflashes.
+ */
+static void ensure_charge_limit_app(void)
+{
+	static const char desktop[] =
+		"[Desktop Entry]\n"
+		"Type=Application\n"
+		"Name=Charge Limit\n"
+		"Comment=Battery Charge Limit & Bypass (MP2650)\n"
+		"Exec=/usr/local/bin/lemonades-charge-gui\n"
+		"Icon=battery-good\n"
+		"Terminal=false\n"
+		"Categories=Settings;System;\n";
+	static const char udev_rule[] =
+		"SUBSYSTEM==\"power_supply\", KERNEL==\"mp2650-charger\", "
+		"RUN+=\"/bin/chmod 0666 /sys/class/power_supply/mp2650-charger/charge_behaviour "
+		"/sys/class/power_supply/mp2650-charger/charge_control_start_threshold "
+		"/sys/class/power_supply/mp2650-charger/charge_control_end_threshold\"\n";
+	static const char svc[] =
+		"[Unit]\n"
+		"Description=Restore OnePlus 9R MP2650 Charge Limit\n"
+		"After=local-fs.target\n\n"
+		"[Service]\n"
+		"Type=oneshot\n"
+		"ExecStart=/usr/local/bin/lemonades-charge-gui --apply-saved\n\n"
+		"[Install]\n"
+		"WantedBy=multi-user.target\n";
+	char buf[16384];
+	int sfd, dfd;
+	ssize_t n;
+
+	sfd = open("/usr/share/lemonades/lemonades-charge-gui", O_RDONLY | O_CLOEXEC);
+	if (sfd >= 0) {
+		mkdir_p("/newroot/usr/local/bin");
+		dfd = open("/newroot/usr/local/bin/lemonades-charge-gui",
+			   O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0755);
+		if (dfd >= 0) {
+			while ((n = read(sfd, buf, sizeof(buf))) > 0) {
+				if (write(dfd, buf, (size_t)n) < 0)
+					break;
+			}
+			close(dfd);
+			if (chmod("/newroot/usr/local/bin/lemonades-charge-gui", 0755) != 0) {}
+		}
+		close(sfd);
+	}
+
+	mkdir_p("/newroot/usr/share/applications");
+	write_newroot_file("/newroot/usr/share/applications/lemonades-charge-limit.desktop",
+			   desktop, sizeof(desktop) - 1);
+
+	mkdir_p("/newroot/etc/udev/rules.d");
+	write_newroot_file("/newroot/etc/udev/rules.d/99-lemonades-charge-limit.rules",
+			   udev_rule, sizeof(udev_rule) - 1);
+
+	mkdir_p("/newroot/etc/lemonades");
+	if (chmod("/newroot/etc/lemonades", 0777) != 0) {}
+	if (access("/newroot/etc/lemonades/charge-limit.conf", F_OK) != 0) {
+		static const char def_conf[] = "START=75\nEND=80\nBEHAVIOUR=auto\n";
+		write_newroot_file("/newroot/etc/lemonades/charge-limit.conf",
+				   def_conf, sizeof(def_conf) - 1);
+	}
+	if (chmod("/newroot/etc/lemonades/charge-limit.conf", 0666) != 0) {}
+
+	mkdir_p("/newroot/etc/systemd/system/multi-user.target.wants");
+	write_newroot_file("/newroot/etc/systemd/system/lemonades-charge-limit.service",
+			   svc, sizeof(svc) - 1);
+	unlink("/newroot/etc/systemd/system/multi-user.target.wants/lemonades-charge-limit.service");
+	if (symlink("/etc/systemd/system/lemonades-charge-limit.service",
+		    "/newroot/etc/systemd/system/multi-user.target.wants/lemonades-charge-limit.service") != 0) {}
+
+	log_kmsg("lemonades-init: Charge Limit GUI + udev + restore service ensured\n");
+}
+
+/*
  * Droidloom needs one contiguous subordinate UID/GID range for root (the cell
  * maps 300000..399999).  /etc/subuid and /etc/subgid ship empty on this image,
  * and a torn append leaves NUL padding that the runtime's parser rejects, so
@@ -711,6 +788,7 @@ static int try_switch_root(void)
 	ensure_ssh_access();
 	ensure_subid_ranges();
 	ensure_audio_config();
+	ensure_charge_limit_app();
 
 	/* Merge /lib/firmware (initramfs) + /newroot/usr/lib/firmware via read-only overlay */
 	if (access("/newroot/usr/lib/firmware", F_OK) == 0) {

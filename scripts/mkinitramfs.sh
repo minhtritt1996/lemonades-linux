@@ -50,7 +50,11 @@ if [ "${USE_618_MODULES:-0}" = "1" ] && [ -d "$ROOT/prebuilt/modules-6.18.34/6.1
 	echo "    [OK] modules 6.18.34-current-sm8250: $(find "$TMP/lib/modules/6.18.34-current-sm8250" -type f | wc -l) files"
 fi
 
-mkdir -p "$TMP/bin" "$TMP/run/rmtfs"
+mkdir -p "$TMP/bin" "$TMP/run/rmtfs" "$TMP/usr/share/lemonades"
+if [ -f "$ROOT/initramfs/charge-gui/lemonades-charge-gui" ]; then
+	cp "$ROOT/initramfs/charge-gui/lemonades-charge-gui" "$TMP/usr/share/lemonades/lemonades-charge-gui"
+	chmod 755 "$TMP/usr/share/lemonades/lemonades-charge-gui"
+fi
 if compgen -G "$ROOT/initramfs/bin/*" >/dev/null; then
 	for f in "$ROOT"/initramfs/bin/*; do
 		case "$f" in *.md) continue ;; esac

@@ -100,8 +100,28 @@ def main() -> int:
     subprocess.run(cmd, check=True)
     write_empty_dtbo(args.dtbo_out)
 
-    print(f"    [OK] {args.out} ({os.path.getsize(args.out)} bytes)")
-    print(f"    [OK] {args.dtbo_out} ({os.path.getsize(args.dtbo_out)} bytes, empty DTBO)")
+    # Validate output images: magic, header_version, page_size, and partition limit (96 MiB).
+    boot_size = os.path.getsize(args.out)
+    max_boot_size = 96 * 1024 * 1024
+    if boot_size > max_boot_size:
+        print(f"ERROR: {args.out} ({boot_size} bytes) exceeds 96 MiB boot partition", file=sys.stderr)
+        return 1
+    with open(args.out, "rb") as f:
+        hdr = f.read(44)
+    magic = hdr[:8]
+    page_size, header_ver = struct.unpack_from("<II", hdr, 36)
+    if magic != b"ANDROID!" or page_size != 4096 or header_ver != 2:
+        print(f"ERROR: invalid boot.img header (magic={magic!r} page={page_size} ver={header_ver})", file=sys.stderr)
+        return 1
+
+    with open(args.dtbo_out, "rb") as f:
+        dtbo_magic = struct.unpack(">I", f.read(4))[0]
+    if dtbo_magic != 0xD7B7AB1E:
+        print(f"ERROR: invalid dtbo.img magic 0x{dtbo_magic:08x}", file=sys.stderr)
+        return 1
+
+    print(f"    [OK] {args.out} ({boot_size} bytes, v2/4096 validated)")
+    print(f"    [OK] {args.dtbo_out} ({os.path.getsize(args.dtbo_out)} bytes, empty DTBO validated)")
     return 0
 
 

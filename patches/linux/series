@@ -12,3 +12,4 @@ lemonades/0011-arm64-dts-qcom-sm8250-add-q6usbdai-and-fastrpc-cma.patch
 lemonades/0012-misc-fastrpc-revert-client-id-regressions.patch
 lemonades/0013-drm-msm-dpu-prefer-upper-lms-for-non-dsc.patch
 lemonades/0014-drm-display-hdmi-audio-configure-from-hw_params.patch
+lemonades/0015-power-supply-add-mps-mp2650-charge-limit-driver.patch

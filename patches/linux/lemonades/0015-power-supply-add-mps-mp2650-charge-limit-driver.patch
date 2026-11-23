@@ -1,0 +1,430 @@
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index b89ef40df..a6986b41c 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -1181,6 +1181,13 @@ config CHARGER_QCOM_SMB2
+ 	  adds support for the SMB2 switch mode battery charger found
+ 	  in PMI8998 and related PMICs.
+ 
++config CHARGER_MPS_MP2650
++	tristate "MPS MP2650 2S charge limit & battery bypass driver"
++	depends on I2C
++	help
++	  Say Y here to enable charge limit thresholds and NVDC battery bypass
++	  (inhibit-charge via REG08 CHG_EN) support on MPS MP2650 2S chargers.
++
+ config FUEL_GAUGE_MM8013
+ 	tristate "Mitsumi MM8013 fuel gauge driver"
+ 	depends on I2C
+diff --git a/drivers/power/supply/Makefile b/drivers/power/supply/Makefile
+index f3c0d1006..6098d5acd 100644
+--- a/drivers/power/supply/Makefile
++++ b/drivers/power/supply/Makefile
+@@ -132,6 +132,7 @@ obj-$(CONFIG_CHARGER_SURFACE)	+= surface_charger.o
+ obj-$(CONFIG_BATTERY_CHARGER_SURFACE_RT) += surface-rt-ec.o
+ obj-$(CONFIG_BATTERY_UG3105)	+= ug3105_battery.o
+ obj-$(CONFIG_CHARGER_QCOM_SMB2)	+= qcom_smbx.o
++obj-$(CONFIG_CHARGER_MPS_MP2650)	+= mps_mp2650_charger.o
+ obj-$(CONFIG_FUEL_GAUGE_MM8013)	+= mm8013.o
+ obj-$(CONFIG_MACSMC_POWER)	+= macsmc-power.o
+ obj-$(CONFIG_CHARGER_MAX77759)	+= max77759_charger.o
+diff --git a/drivers/power/supply/mps_mp2650_charger.c b/drivers/power/supply/mps_mp2650_charger.c
+new file mode 100644
+index 000000000..398161301
+--- /dev/null
++++ b/drivers/power/supply/mps_mp2650_charger.c
+@@ -0,0 +1,394 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Monolithic Power Systems MP2650 2S Buck-Boost Charge Limit & Bypass Driver
++ *
++ * Used on OnePlus 9R (lemonades) / 8T (kebab) on I2C5 @ 0x5c for 2-cell (8.7V)
++ * battery charging with NVDC power path management.
++ *
++ * Exposes standard Linux power_supply properties:
++ *   - charge_behaviour: auto | inhibit-charge
++ *   - charge_control_start_threshold (20..95, default 75)
++ *   - charge_control_end_threshold   (40..100, default 80; 100 = disabled)
++ *
++ * Clearing REG08 BIT(4) (CHG_EN) disables battery charging while keeping the
++ * NVDC buck-boost converter supplying VSYS directly from USB-PD (true hardware
++ * battery bypass / idle mode, ~0 mA battery current).
++ */
++
++#include <linux/i2c.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/power_supply.h>
++#include <linux/workqueue.h>
++
++#define MP2650_REG_CTRL0		0x08
++#define MP2650_CHG_EN_BIT		BIT(4)
++#define MP2650_WTD_RST_BIT		BIT(6)
++
++#define MP2650_REG_CTRL1		0x09
++#define MP2650_WTD_TIMER_MASK		GENMASK(5, 4)
++
++#define MP2650_REG_STATUS		0x13
++#define MP2650_VIN_PG_NO_BIT		BIT(1)	/* 0 = VIN power good, 1 = no VIN */
++#define MP2650_CHG_STAT_MASK		GENMASK(3, 2)
++#define MP2650_CHG_STAT_NOT_CHARGING	0
++#define MP2650_CHG_STAT_PRE_CHARGE	BIT(2)
++#define MP2650_CHG_STAT_FAST_CHARGE	BIT(3)
++#define MP2650_CHG_STAT_TERMINATED	(BIT(3) | BIT(2))
++
++#define POLL_INTERVAL_MS		15000
++#define DEFAULT_START_THRESHOLD		75
++#define DEFAULT_END_THRESHOLD		80
++
++struct mp2650_charger {
++	struct i2c_client *client;
++	struct power_supply *psy;
++	struct delayed_work poll_work;
++	struct mutex lock;
++
++	enum power_supply_charge_behaviour behaviour;
++	int start_threshold;
++	int end_threshold;
++	bool limit_inhibited;
++};
++
++static int mp2650_update_bits(struct i2c_client *client, u8 reg, u8 mask, u8 val)
++{
++	int cur;
++	u8 next;
++
++	cur = i2c_smbus_read_byte_data(client, reg);
++	if (cur < 0)
++		return cur;
++
++	next = ((u8)cur & ~mask) | (val & mask);
++	if (next == (u8)cur)
++		return 0;
++
++	return i2c_smbus_write_byte_data(client, reg, next);
++}
++
++static int mp2650_read_battery_capacity(void)
++{
++	struct power_supply *bat;
++	union power_supply_propval val;
++	int ret;
++
++	bat = power_supply_get_by_name("bq27541-0");
++	if (!bat)
++		return -ENODEV;
++
++	ret = power_supply_get_property(bat, POWER_SUPPLY_PROP_CAPACITY, &val);
++	power_supply_put(bat);
++	if (ret < 0)
++		return ret;
++
++	return val.intval;
++}
++
++static void mp2650_evaluate_locked(struct mp2650_charger *chg)
++{
++	int cap, reg08, ret;
++	bool want_enable = true;
++	bool cur_hw_en;
++
++	if (chg->behaviour == POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE) {
++		want_enable = false;
++	} else if (chg->end_threshold >= 100) {
++		chg->limit_inhibited = false;
++		want_enable = true;
++	} else {
++		cap = mp2650_read_battery_capacity();
++		if (cap >= 0) {
++			if (cap >= chg->end_threshold)
++				chg->limit_inhibited = true;
++			else if (cap <= chg->start_threshold)
++				chg->limit_inhibited = false;
++		}
++		want_enable = !chg->limit_inhibited;
++	}
++
++	reg08 = i2c_smbus_read_byte_data(chg->client, MP2650_REG_CTRL0);
++	if (reg08 < 0)
++		return;
++
++	cur_hw_en = !!(reg08 & MP2650_CHG_EN_BIT);
++	if (want_enable != cur_hw_en) {
++		ret = mp2650_update_bits(chg->client, MP2650_REG_CTRL0,
++					 MP2650_CHG_EN_BIT,
++					 want_enable ? MP2650_CHG_EN_BIT : 0);
++		if (ret == 0)
++			power_supply_changed(chg->psy);
++		else
++			dev_err(&chg->client->dev,
++				"failed to set CHG_EN=%d: %d\n",
++				want_enable, ret);
++	}
++}
++
++static void mp2650_poll_work(struct work_struct *work)
++{
++	struct mp2650_charger *chg =
++		container_of(work, struct mp2650_charger, poll_work.work);
++
++	mutex_lock(&chg->lock);
++	/* Keep watchdog disabled in case adapter replug reset MP2650 */
++	mp2650_update_bits(chg->client, MP2650_REG_CTRL1,
++			   MP2650_WTD_TIMER_MASK, 0);
++	mp2650_evaluate_locked(chg);
++	mutex_unlock(&chg->lock);
++
++	schedule_delayed_work(&chg->poll_work, msecs_to_jiffies(POLL_INTERVAL_MS));
++}
++
++static int mp2650_get_property(struct power_supply *psy,
++			       enum power_supply_property psp,
++			       union power_supply_propval *val)
++{
++	struct mp2650_charger *chg = power_supply_get_drvdata(psy);
++	int regval, ret = 0;
++
++	mutex_lock(&chg->lock);
++	switch (psp) {
++	case POWER_SUPPLY_PROP_STATUS:
++		regval = i2c_smbus_read_byte_data(chg->client, MP2650_REG_CTRL0);
++		if (regval < 0) {
++			ret = regval;
++			break;
++		}
++		if (!(regval & MP2650_CHG_EN_BIT)) {
++			val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
++			break;
++		}
++		regval = i2c_smbus_read_byte_data(chg->client, MP2650_REG_STATUS);
++		if (regval < 0) {
++			ret = regval;
++			break;
++		}
++		switch (regval & MP2650_CHG_STAT_MASK) {
++		case MP2650_CHG_STAT_PRE_CHARGE:
++		case MP2650_CHG_STAT_FAST_CHARGE:
++			val->intval = POWER_SUPPLY_STATUS_CHARGING;
++			break;
++		case MP2650_CHG_STAT_TERMINATED:
++			val->intval = POWER_SUPPLY_STATUS_FULL;
++			break;
++		default:
++			val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
++			break;
++		}
++		break;
++	case POWER_SUPPLY_PROP_ONLINE:
++		regval = i2c_smbus_read_byte_data(chg->client, MP2650_REG_STATUS);
++		if (regval < 0) {
++			ret = regval;
++			break;
++		}
++		val->intval = !(regval & MP2650_VIN_PG_NO_BIT);
++		break;
++	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
++		val->intval = chg->behaviour;
++		break;
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD:
++		val->intval = chg->start_threshold;
++		break;
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
++		val->intval = chg->end_threshold;
++		break;
++	default:
++		ret = -EINVAL;
++		break;
++	}
++	mutex_unlock(&chg->lock);
++
++	return ret;
++}
++
++static int mp2650_set_property(struct power_supply *psy,
++			       enum power_supply_property psp,
++			       const union power_supply_propval *val)
++{
++	struct mp2650_charger *chg = power_supply_get_drvdata(psy);
++	int ret = 0;
++
++	mutex_lock(&chg->lock);
++	switch (psp) {
++	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
++		if (val->intval != POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO &&
++		    val->intval != POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE) {
++			ret = -EINVAL;
++			break;
++		}
++		chg->behaviour = val->intval;
++		mp2650_evaluate_locked(chg);
++		break;
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD:
++		if (val->intval < 20 || val->intval > 95) {
++			ret = -EINVAL;
++			break;
++		}
++		chg->start_threshold = val->intval;
++		if (chg->start_threshold >= chg->end_threshold && chg->end_threshold < 100)
++			chg->end_threshold = min(100, chg->start_threshold + 5);
++		mp2650_evaluate_locked(chg);
++		break;
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
++		if (val->intval < 40 || val->intval > 100) {
++			ret = -EINVAL;
++			break;
++		}
++		chg->end_threshold = val->intval;
++		if (chg->start_threshold >= chg->end_threshold)
++			chg->start_threshold = max(20, chg->end_threshold - 5);
++		mp2650_evaluate_locked(chg);
++		break;
++	default:
++		ret = -EINVAL;
++		break;
++	}
++	mutex_unlock(&chg->lock);
++
++	if (ret == 0)
++		power_supply_changed(chg->psy);
++	return ret;
++}
++
++static int mp2650_property_is_writeable(struct power_supply *psy,
++					enum power_supply_property psp)
++{
++	switch (psp) {
++	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD:
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
++		return 1;
++	default:
++		return 0;
++	}
++}
++
++static enum power_supply_property mp2650_props[] = {
++	POWER_SUPPLY_PROP_STATUS,
++	POWER_SUPPLY_PROP_ONLINE,
++	POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR,
++	POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD,
++	POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD,
++};
++
++static const struct power_supply_desc mp2650_psy_desc = {
++	.name = "mp2650-charger",
++	.type = POWER_SUPPLY_TYPE_MAINS,
++	.properties = mp2650_props,
++	.num_properties = ARRAY_SIZE(mp2650_props),
++	.get_property = mp2650_get_property,
++	.set_property = mp2650_set_property,
++	.property_is_writeable = mp2650_property_is_writeable,
++	.charge_behaviours = BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO) |
++			     BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE),
++};
++
++static ssize_t hw_charge_enabled_show(struct device *dev,
++				      struct device_attribute *attr, char *buf)
++{
++	struct power_supply *psy = dev_get_drvdata(dev);
++	struct mp2650_charger *chg = power_supply_get_drvdata(psy);
++	int reg08;
++
++	mutex_lock(&chg->lock);
++	reg08 = i2c_smbus_read_byte_data(chg->client, MP2650_REG_CTRL0);
++	mutex_unlock(&chg->lock);
++	if (reg08 < 0)
++		return reg08;
++
++	return sysfs_emit(buf, "%d\n", !!(reg08 & MP2650_CHG_EN_BIT));
++}
++static DEVICE_ATTR_RO(hw_charge_enabled);
++
++static struct attribute *mp2650_attrs[] = {
++	&dev_attr_hw_charge_enabled.attr,
++	NULL,
++};
++ATTRIBUTE_GROUPS(mp2650);
++
++static int mp2650_charger_probe(struct i2c_client *client)
++{
++	struct power_supply_config psy_cfg = {};
++	struct mp2650_charger *chg;
++	int reg08, reg13;
++
++	reg08 = i2c_smbus_read_byte_data(client, MP2650_REG_CTRL0);
++	if (reg08 < 0)
++		return dev_err_probe(&client->dev, reg08,
++				     "failed to read MP2650 REG08\n");
++
++	reg13 = i2c_smbus_read_byte_data(client, MP2650_REG_STATUS);
++	if (reg13 < 0)
++		return dev_err_probe(&client->dev, reg13,
++				     "failed to read MP2650 REG13\n");
++
++	chg = devm_kzalloc(&client->dev, sizeof(*chg), GFP_KERNEL);
++	if (!chg)
++		return -ENOMEM;
++
++	chg->client = client;
++	chg->behaviour = POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO;
++	chg->start_threshold = DEFAULT_START_THRESHOLD;
++	chg->end_threshold = DEFAULT_END_THRESHOLD;
++	mutex_init(&chg->lock);
++	INIT_DELAYED_WORK(&chg->poll_work, mp2650_poll_work);
++
++	/* Disable I2C watchdog so CHG_EN=0 persists indefinitely */
++	mp2650_update_bits(client, MP2650_REG_CTRL1, MP2650_WTD_TIMER_MASK, 0);
++
++	psy_cfg.drv_data = chg;
++	psy_cfg.fwnode = dev_fwnode(&client->dev);
++	psy_cfg.attr_grp = mp2650_groups;
++
++	chg->psy = devm_power_supply_register(&client->dev, &mp2650_psy_desc,
++					      &psy_cfg);
++	if (IS_ERR(chg->psy))
++		return dev_err_probe(&client->dev, PTR_ERR(chg->psy),
++				     "failed to register mp2650 power_supply\n");
++
++	i2c_set_clientdata(client, chg);
++	schedule_delayed_work(&chg->poll_work, msecs_to_jiffies(2000));
++
++	dev_info(&client->dev,
++		 "MPS MP2650 charge limit ready (REG08=0x%02x REG13=0x%02x, default %d%%-%d%%)\n",
++		 reg08, reg13, chg->start_threshold, chg->end_threshold);
++	return 0;
++}
++
++static void mp2650_charger_remove(struct i2c_client *client)
++{
++	struct mp2650_charger *chg = i2c_get_clientdata(client);
++
++	cancel_delayed_work_sync(&chg->poll_work);
++}
++
++static const struct of_device_id mp2650_of_match[] = {
++	{ .compatible = "mps,mp2650-charger" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, mp2650_of_match);
++
++static const struct i2c_device_id mp2650_id[] = {
++	{ "mp2650-charger" },
++	{ }
++};
++MODULE_DEVICE_TABLE(i2c, mp2650_id);
++
++static struct i2c_driver mp2650_charger_driver = {
++	.driver = {
++		.name = "mps-mp2650-charger",
++		.of_match_table = mp2650_of_match,
++	},
++	.probe = mp2650_charger_probe,
++	.remove = mp2650_charger_remove,
++	.id_table = mp2650_id,
++};
++module_i2c_driver(mp2650_charger_driver);
++
++MODULE_DESCRIPTION("MPS MP2650 2S Charge Limit & Battery Bypass Driver");
++MODULE_LICENSE("GPL");

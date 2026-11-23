@@ -166,6 +166,10 @@ export_patches() {
 		drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
 	export_patch "lemonades/0014-drm-display-hdmi-audio-configure-from-hw_params.patch" \
 		drivers/gpu/drm/display/drm_hdmi_audio_helper.c
+	export_patch "lemonades/0015-power-supply-add-mps-mp2650-charge-limit-driver.patch" \
+		drivers/power/supply/Kconfig \
+		drivers/power/supply/Makefile \
+		drivers/power/supply/mps_mp2650_charger.c
 }
 
 check_tree() {
@@ -187,7 +191,16 @@ check_tree() {
 	make -C "$tmp/linux" O="$tmp/out" ARCH=arm64 CROSS_COMPILE="$CROSS" olddefconfig
 	make -C "$tmp/linux" O="$tmp/out" ARCH=arm64 CROSS_COMPILE="$CROSS" -j"$JOBS" \
 		Image.gz qcom/sm8250-oneplus-lemonades.dtb
-	echo "==> [PASS] clean series + kernel + DTB build OK"
+	echo "==> Check: validating initramfs + Charge Limit GUI + boot.img v2 + dtbo.img"
+	python3 -m py_compile "$ROOT/initramfs/charge-gui/lemonades-charge-gui"
+	CROSS_COMPILE="$CROSS" "$ROOT/scripts/mkinitramfs.sh" "$tmp/out/initrd.cpio.gz"
+	python3 "$ROOT/scripts/build-bootimg.py" \
+		--kernel "$tmp/out/arch/arm64/boot/Image.gz" \
+		--ramdisk "$tmp/out/initrd.cpio.gz" \
+		--dtb "$tmp/out/arch/arm64/boot/dts/qcom/sm8250-oneplus-lemonades.dtb" \
+		--out "$tmp/out/boot.img" \
+		--dtbo-out "$tmp/out/dtbo.img"
+	echo "==> [PASS] clean series + kernel + DTB + initramfs + boot.img v2 + dtbo.img OK"
 }
 
 cmd=${1:-}

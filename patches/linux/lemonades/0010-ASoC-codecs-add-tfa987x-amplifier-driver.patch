@@ -44,7 +44,7 @@ index 3d122ace7..28e5afe7d 100644
  obj-$(CONFIG_SND_SOC_TLV320ADC3XXX)	+= snd-soc-tlv320adc3xxx.o
 diff --git a/sound/soc/codecs/tfa987x.c b/sound/soc/codecs/tfa987x.c
 new file mode 100644
-index 000000000..657243fa9
+index 000000000..8f0bc0201
 --- /dev/null
 +++ b/sound/soc/codecs/tfa987x.c
 @@ -0,0 +1,323 @@
@@ -92,7 +92,7 @@ index 000000000..657243fa9
 +#define TFA987X_TDM_CFG3_VSE_MSK	BIT(4)
 +#define TFA987X_TDM_CFG6		0x26
 +#define TFA987X_TDM_CFG6_SPKS_MSK	GENMASK(3,  0)
-+#define TFA987X_TDM_CFG6_DCS_MSK	GENMASK(4,  7)
++#define TFA987X_TDM_CFG6_DCS_MSK	GENMASK(7, 4)
 +#define TFA987X_TDM_CFG6_CSS_MSK	GENMASK(15, 12)
 +#define TFA987X_TDM_CFG7		0x27
 +#define TFA987X_TDM_CFG7_VSS_MSK	GENMASK(3,  0)

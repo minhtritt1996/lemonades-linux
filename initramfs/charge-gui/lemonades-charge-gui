@@ -1,0 +1,330 @@
+#!/usr/bin/env python3
+"""OnePlus 9R (lemonades) Charge Limit & Battery Bypass GUI.
+
+Zero external dependencies: runs a local HTTP server bound to 127.0.0.1 and
+opens Chromium in native --app window mode. Exits automatically when closed.
+"""
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+CHG_DIR = "/sys/class/power_supply/mp2650-charger"
+BAT_DIR = "/sys/class/power_supply/bq27541-0"
+CONF_PATH = "/etc/lemonades/charge-limit.conf"
+
+
+def read_str(path, default=""):
+    try:
+        with open(path, "r") as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def read_int(path, default=0):
+    try:
+        return int(read_str(path))
+    except (ValueError, TypeError):
+        return default
+
+
+def write_str(path, val):
+    with open(path, "w") as f:
+        f.write(str(val) + "\n")
+
+
+def find_pd_dir():
+    base = "/sys/class/power_supply"
+    try:
+        for name in os.listdir(base):
+            if name.startswith("tcpm-source-psy-"):
+                return os.path.join(base, name)
+    except OSError:
+        pass
+    return None
+
+
+def parse_behaviour(raw):
+    # sysfs returns e.g. "[auto] inhibit-charge" or "auto [inhibit-charge]"
+    for tok in raw.split():
+        if tok.startswith("[") and tok.endswith("]"):
+            return tok[1:-1]
+    return raw or "auto"
+
+
+def get_state():
+    pd_dir = find_pd_dir()
+    pd_v = read_int(os.path.join(pd_dir, "voltage_now")) / 1e6 if pd_dir else 0.0
+    pd_i = read_int(os.path.join(pd_dir, "current_now")) / 1e6 if pd_dir else 0.0
+    pd_on = read_int(os.path.join(pd_dir, "online")) if pd_dir else 0
+
+    chg_present = os.path.isdir(CHG_DIR)
+    behaviour = parse_behaviour(read_str(os.path.join(CHG_DIR, "charge_behaviour")))
+    start_thr = read_int(os.path.join(CHG_DIR, "charge_control_start_threshold"), 75)
+    end_thr = read_int(os.path.join(CHG_DIR, "charge_control_end_threshold"), 80)
+    hw_on = read_int(os.path.join(CHG_DIR, "hw_charge_enabled"), 1)
+    chg_status = read_str(os.path.join(CHG_DIR, "status"), "Unknown")
+
+    return {
+        "driver_ok": chg_present,
+        "capacity": read_int(os.path.join(BAT_DIR, "capacity"), -1),
+        "bat_status": read_str(os.path.join(BAT_DIR, "status"), "Unknown"),
+        "bat_voltage_v": round(read_int(os.path.join(BAT_DIR, "voltage_now")) / 1e6, 2),
+        "bat_current_ma": round(read_int(os.path.join(BAT_DIR, "current_now")) / 1e3, 1),
+        "pd_online": bool(pd_on),
+        "pd_voltage_v": round(pd_v, 1),
+        "pd_current_a": round(pd_i, 2),
+        "behaviour": behaviour,
+        "start_threshold": start_thr,
+        "end_threshold": end_thr,
+        "hw_charging_enabled": bool(hw_on),
+        "chg_status": chg_status,
+    }
+
+
+def apply_settings(start_thr, end_thr, behaviour):
+    start_thr = max(20, min(95, int(start_thr)))
+    end_thr = max(40, min(100, int(end_thr)))
+    if start_thr >= end_thr and end_thr < 100:
+        start_thr = max(20, end_thr - 5)
+    if behaviour not in ("auto", "inhibit-charge"):
+        behaviour = "auto"
+
+    write_str(os.path.join(CHG_DIR, "charge_control_end_threshold"), end_thr)
+    write_str(os.path.join(CHG_DIR, "charge_control_start_threshold"), start_thr)
+    write_str(os.path.join(CHG_DIR, "charge_behaviour"), behaviour)
+
+    try:
+        os.makedirs(os.path.dirname(CONF_PATH), exist_ok=True)
+        with open(CONF_PATH, "w") as f:
+            f.write(f"START={start_thr}\nEND={end_thr}\nBEHAVIOUR={behaviour}\n")
+    except OSError:
+        pass
+
+
+HTML = """<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Charge Limit — OnePlus 9R</title>
+<style>
+  :root { --bg:#0f1117; --card:#191d27; --border:#272d3d; --text:#eef2ff; --muted:#94a3b8; --accent:#38bdf8; --ok:#22c55e; --warn:#f59e0b; }
+  * { box-sizing:border-box; font-family:system-ui,-apple-system,sans-serif; }
+  body { margin:0; padding:18px; background:var(--bg); color:var(--text); user-select:none; }
+  h1 { font-size:20px; margin:0 0 14px; display:flex; align-items:center; justify-content:space-between; }
+  .badge { font-size:12px; padding:4px 10px; border-radius:999px; font-weight:600; background:#1e293b; color:var(--muted); }
+  .badge.bypass { background:rgba(34,197,94,.18); color:var(--ok); }
+  .badge.charging { background:rgba(56,189,248,.18); color:var(--accent); }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px 16px; margin-bottom:12px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .stat-label { font-size:12px; color:var(--muted); }
+  .stat-val { font-size:20px; font-weight:700; margin-top:2px; }
+  .presets { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  button { background:#232938; color:var(--text); border:1px solid var(--border); border-radius:10px; padding:10px 8px; font-size:13px; font-weight:600; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); color:#0b1020; border-color:var(--accent); width:100%; padding:12px; font-size:14px; margin-top:8px; }
+  .row { display:flex; justify-content:space-between; align-items:center; margin:10px 0 4px; font-size:14px; }
+  input[type=range] { width:100%; accent-color:var(--accent); height:6px; }
+  .toggle { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  input[type=checkbox] { width:22px; height:22px; accent-color:var(--ok); cursor:pointer; }
+  .msg { font-size:12px; color:var(--ok); min-height:18px; margin-top:6px; text-align:center; }
+  .err { color:#f87171; }
+</style>
+</head>
+<body>
+  <h1><span>Charge Limit</span><span id="badge" class="badge">...</span></h1>
+
+  <div class="card">
+    <div class="grid">
+      <div><div class="stat-label">Pin hiện tại</div><div class="stat-val" id="cap">--%</div></div>
+      <div><div class="stat-label">Điện áp / Dòng</div><div class="stat-val" id="vi">--</div></div>
+      <div><div class="stat-label">Nguồn USB-PD</div><div class="stat-val" id="pd">--</div></div>
+      <div><div class="stat-label">Mạch sạc PM8150B</div><div class="stat-val" id="hw">--</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="stat-label" style="margin-bottom:8px">Chế độ nhanh</div>
+    <div class="presets">
+      <button onclick="preset(60,70,'auto')">Dock 24/7<br><small>60–70%</small></button>
+      <button onclick="preset(75,80,'auto')">Cân bằng<br><small>75–80%</small></button>
+      <button onclick="preset(95,100,'auto')">Sạc đầy<br><small>100%</small></button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row"><span>Ngưỡng dừng sạc (Bypass)</span><strong id="endVal">80%</strong></div>
+    <input id="endSlider" type="range" min="45" max="100" step="5" value="80" oninput="syncSliders()">
+    <div class="row"><span>Ngưỡng sạc lại</span><strong id="startVal">75%</strong></div>
+    <input id="startSlider" type="range" min="20" max="95" step="5" value="75" oninput="syncSliders()">
+    <div class="toggle" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+      <div>
+        <div style="font-weight:600;font-size:14px">Ép Bypass ngay lập tức</div>
+        <div class="stat-label">Ngắt sạc vào pin, nuôi máy trực tiếp từ PD</div>
+      </div>
+      <input id="inhibit" type="checkbox">
+    </div>
+    <button class="primary" onclick="save()">Áp dụng & Lưu</button>
+    <div id="msg" class="msg"></div>
+  </div>
+
+<script>
+let initialized = false;
+function syncSliders() {
+  let e = parseInt(endSlider.value), s = parseInt(startSlider.value);
+  if (s >= e && e < 100) { s = Math.max(20, e - 5); startSlider.value = s; }
+  endVal.textContent = e + (e === 100 ? '% (Tắt)' : '%');
+  startVal.textContent = s + '%';
+}
+async function refresh() {
+  try {
+    const r = await fetch('/api/state');
+    const d = await r.json();
+    cap.textContent = d.capacity >= 0 ? d.capacity + '%' : '--';
+    vi.textContent = d.bat_voltage_v.toFixed(2) + 'V / ' + d.bat_current_ma + 'mA';
+    pd.textContent = d.pd_online ? (d.pd_voltage_v + 'V / ' + d.pd_current_a + 'A') : 'Không cắm';
+    hw.textContent = d.hw_charging_enabled ? 'Đang nạp' : 'Bypass (Ngắt)';
+    badge.textContent = d.hw_charging_enabled ? 'Đang sạc' : 'Battery Bypass';
+    badge.className = 'badge ' + (d.hw_charging_enabled ? 'charging' : 'bypass');
+    if (!initialized) {
+      endSlider.value = d.end_threshold;
+      startSlider.value = d.start_threshold;
+      inhibit.checked = (d.behaviour === 'inhibit-charge');
+      syncSliders();
+      initialized = true;
+    }
+  } catch (e) {}
+}
+async function save() {
+  msg.className = 'msg';
+  msg.textContent = 'Đang áp dụng...';
+  const body = {
+    start_threshold: parseInt(startSlider.value),
+    end_threshold: parseInt(endSlider.value),
+    behaviour: inhibit.checked ? 'inhibit-charge' : 'auto'
+  };
+  const r = await fetch('/api/apply', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+  });
+  const res = await r.json();
+  if (res.ok) { msg.textContent = 'Đã áp dụng & lưu cài đặt!'; refresh(); }
+  else { msg.className = 'msg err'; msg.textContent = 'Lỗi: ' + res.error; }
+}
+function preset(s, e, b) {
+  startSlider.value = s; endSlider.value = e; inhibit.checked = (b === 'inhibit-charge');
+  syncSliders(); save();
+}
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
+"""
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        pass
+
+    def _send(self, code, ctype, data):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path == "/" or self.path.startswith("/?"):
+            self._send(200, "text/html; charset=utf-8", HTML.encode("utf-8"))
+        elif self.path == "/api/state":
+            self._send(200, "application/json", json.dumps(get_state()).encode("utf-8"))
+        else:
+            self._send(404, "text/plain", b"Not found")
+
+    def do_POST(self):
+        if self.path == "/api/apply":
+            n = int(self.headers.get("Content-Length", "0"))
+            try:
+                body = json.loads(self.rfile.read(n).decode("utf-8"))
+                apply_settings(
+                    body.get("start_threshold", 75),
+                    body.get("end_threshold", 80),
+                    body.get("behaviour", "auto"),
+                )
+                self._send(200, "application/json", json.dumps({"ok": True}).encode("utf-8"))
+            except Exception as e:
+                self._send(500, "application/json", json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+        else:
+            self._send(404, "text/plain", b"Not found")
+
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--apply-saved":
+        vals = {}
+        if os.path.isfile(CONF_PATH):
+            with open(CONF_PATH) as f:
+                for line in f:
+                    if "=" in line:
+                        k, v = line.strip().split("=", 1)
+                        vals[k] = v
+            apply_settings(vals.get("START", 75), vals.get("END", 80), vals.get("BEHAVIOUR", "auto"))
+        return
+
+    port = 18942
+    already_running = False
+    try:
+        s_test = socket.create_connection(("127.0.0.1", port), timeout=0.3)
+        s_test.close()
+        already_running = True
+    except OSError:
+        already_running = False
+
+    srv = None
+    if not already_running:
+        try:
+            srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        except OSError:
+            sock = socket.socket()
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+            sock.close()
+            srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+
+    url = f"http://127.0.0.1:{port}"
+    browser = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("firefox")
+    if browser and "chromium" in os.path.basename(browser):
+        profile_dir = os.path.join(os.path.expanduser("~"), ".cache", "lemonades-charge-gui-profile")
+        os.makedirs(profile_dir, exist_ok=True)
+        p = subprocess.Popen([
+            browser,
+            f"--user-data-dir={profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            f"--app={url}",
+            "--window-size=440,700",
+            "--class=lemonades-charge-limit",
+        ])
+        p.wait()
+        if srv is not None:
+            srv.shutdown()
+    else:
+        print(f"Charge Limit GUI running at {url}")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            if srv is not None:
+                srv.shutdown()
+
+
+if __name__ == "__main__":
+    main()
