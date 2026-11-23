@@ -13,3 +13,5 @@ lemonades/0012-misc-fastrpc-revert-client-id-regressions.patch
 lemonades/0013-drm-msm-dpu-prefer-upper-lms-for-non-dsc.patch
 lemonades/0014-drm-display-hdmi-audio-configure-from-hw_params.patch
 lemonades/0015-power-supply-add-mps-mp2650-charge-limit-driver.patch
+lemonades/0016-bus-mhi-add-sdx55-sahara-and-efs-pipes.patch
+lemonades/0017-bus-mhi-pci_generic-add-sdx55m-modem-profile.patch

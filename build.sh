@@ -173,6 +173,17 @@ export_patches() {
 		drivers/power/supply/Kconfig \
 		drivers/power/supply/Makefile \
 		drivers/power/supply/mps_mp2650_charger.c
+	export_patch "lemonades/0016-bus-mhi-add-sdx55-sahara-and-efs-pipes.patch" \
+		drivers/bus/mhi/common.h \
+		drivers/bus/mhi/host/Kconfig \
+		drivers/bus/mhi/host/Makefile \
+		drivers/bus/mhi/host/boot.c \
+		drivers/bus/mhi/host/init.c \
+		drivers/bus/mhi/host/main.c \
+		drivers/bus/mhi/host/mhi_sahara.c \
+		include/linux/mhi.h
+	export_patch "lemonades/0017-bus-mhi-pci_generic-add-sdx55m-modem-profile.patch" \
+		drivers/bus/mhi/host/pci_generic.c
 }
 
 check_tree() {

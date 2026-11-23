@@ -1,0 +1,18 @@
+[Unit]
+Description=External SDX55M 5G modem bring-up (SAHARA images + EFS sync)
+Documentation=https://github.com/ (lemonades-linux: scripts/modem/README)
+After=systemd-udevd.service
+ConditionPathExists=/sys/bus/mhi/devices/mhi0
+# Not enabled by default: the SAHARA image transfer does not reach AMSS yet
+# (see build/5g-bringup.md). Enable with `systemctl enable
+# lemonades-sdx55-modem.service` once it does.
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/lemonades-sdx55-modem.sh
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

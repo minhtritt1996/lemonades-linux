@@ -281,6 +281,13 @@ static void mount_slot_firmware(const char *slot)
 			if (access("/mnt/modem/image/slpi.mdt", F_OK) == 0)
 				mount("/mnt/modem/image", "/lib/firmware/qcom/sm8250/slpi",
 				      NULL, MS_BIND, NULL);
+			/* External SDX55 (PCIe2/MHI) images for the userspace
+			 * SAHARA loader: image/sdx55m/{sbl1,qdsp6sw,...}.mnb and
+			 * the carrier MCFG tree image/modem_pr. */
+			mkdir_p("/lib/firmware/qcom/sdx55m");
+			if (access("/mnt/modem/image/sdx55m/sbl1.mbn", F_OK) == 0)
+				mount("/mnt/modem/image/sdx55m",
+				      "/lib/firmware/qcom/sdx55m", NULL, MS_BIND, NULL);
 			log_kmsg("lemonades-init: mounted %s (%s)\n", part, dev);
 		}
 	}
@@ -823,6 +830,10 @@ static int try_switch_root(void)
 			if (access("/lib/firmware/qcom/sm8250/slpi/slpi.mdt", F_OK) == 0)
 				mount("/lib/firmware/qcom/sm8250/slpi",
 				      "/newroot/usr/lib/firmware/qcom/sm8250/slpi",
+				      NULL, MS_BIND, NULL);
+			if (access("/lib/firmware/qcom/sdx55m/sbl1.mbn", F_OK) == 0)
+				mount("/lib/firmware/qcom/sdx55m",
+				      "/newroot/usr/lib/firmware/qcom/sdx55m",
 				      NULL, MS_BIND, NULL);
 		}
 		mount("/newroot/usr/lib/firmware", "/lib/firmware", NULL, MS_BIND | MS_REC, NULL);
