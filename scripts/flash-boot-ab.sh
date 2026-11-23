@@ -32,11 +32,18 @@ ssh_do() { ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "$HOST" 
 
 [ -f "$IMG" ] || { echo "ERROR: missing $IMG" >&2; exit 1; }
 
-# Validate boot.img v2 header & 96 MiB partition limit before touching the device.
+# Validate boot.img v2 header (magic, page_size=4096, header_version=2) & 96 MiB limit.
 size=$(stat -c %s "$IMG")
 [ "$size" -le 100663296 ] || { echo "ERROR: $IMG ($size bytes) exceeds 96 MiB boot partition" >&2; exit 1; }
-magic=$(head -c 8 "$IMG" | tr -d '\0')
-[ "$magic" = "ANDROID!" ] || { echo "ERROR: $IMG is not an Android boot image" >&2; exit 1; }
+python3 - "$IMG" <<'PY'
+import struct, sys
+with open(sys.argv[1], "rb") as f:
+    hdr = f.read(44)
+magic = hdr[:8]
+page_size, header_ver = struct.unpack_from("<II", hdr, 36)
+if magic != b"ANDROID!" or page_size != 4096 or header_ver != 2:
+    sys.exit(f"ERROR: invalid boot.img header (magic={magic!r} page={page_size} ver={header_ver})")
+PY
 
 slot_state=$(ssh_do /usr/lib/slot-success/qbootctl)
 cur=$(printf '%s\n' "$slot_state" | awk '/^Current slot:/{print $3}')
@@ -63,6 +70,23 @@ echo "candidate    : $other  <- will be written (running slot stays untouched)"
 echo "image        : $IMG ($size bytes, sha256 $sha)"
 echo "host         : $HOST"
 
+# Preflight DTBO check BEFORE writing boot$other: must be either all-zeroed OR
+# match the generated empty dtbo.img (fail closed if DTBO_IMG is missing).
+dtbo_hdr=$(ssh_do "head -c 64 /dev/disk/by-partlabel/dtbo$other | od -An -v -tx1 | tr -d ' \n'")
+case "$dtbo_hdr" in
+d7b7ab1e*)
+	[ -f "$DTBO_IMG" ] || { echo "ERROR: dtbo$other has DTBO magic but $DTBO_IMG is missing to verify it" >&2; exit 1; }
+	dtbo_sz=$(stat -c %s "$DTBO_IMG")
+	dtbo_local=$(sha256sum "$DTBO_IMG" | cut -d' ' -f1)
+	dtbo_remote=$(ssh_do "head -c $dtbo_sz /dev/disk/by-partlabel/dtbo$other | sha256sum" | cut -d' ' -f1)
+	[ "$dtbo_remote" = "$dtbo_local" ] || { echo "ERROR: dtbo$other contains non-empty vendor DTBO (flash empty dtbo.img once via fastboot)" >&2; exit 1; }
+	;;
+*[!0]*)
+	echo "ERROR: dtbo$other is neither zeroed nor matching empty dtbo.img; ABL may apply conflicting vendor overlays" >&2
+	exit 1
+	;;
+esac
+
 if [ "$YES" != 1 ]; then
 	echo "DRY RUN: pass --yes to write /dev/disk/by-partlabel/boot$other (then switch slot via fastboot --set-active=${other#_})"
 	exit 0
@@ -75,23 +99,6 @@ remote_sha=$(ssh_do sha256sum /tmp/boot.img | cut -d' ' -f1)
 ssh_do "dd if=/tmp/boot.img of=/dev/disk/by-partlabel/boot$other bs=4M conv=fsync 2>&1 | tail -1; rm -f /tmp/boot.img; sync"
 back_sha=$(ssh_do "head -c $size /dev/disk/by-partlabel/boot$other | sha256sum" | cut -d' ' -f1)
 [ "$back_sha" = "$sha" ] || { echo "ERROR: readback sha mismatch ($back_sha)" >&2; exit 1; }
-
-# Verify dtbo$other is safe for mainline boot: either all-zeroed OR matching empty dtbo.img (magic d7b7ab1e).
-dtbo_hdr=$(ssh_do "head -c 64 /dev/disk/by-partlabel/dtbo$other | od -An -v -tx1 | tr -d ' \n'")
-case "$dtbo_hdr" in
-d7b7ab1e*)
-	if [ -f "$DTBO_IMG" ]; then
-		dtbo_sz=$(stat -c %s "$DTBO_IMG")
-		dtbo_local=$(sha256sum "$DTBO_IMG" | cut -d' ' -f1)
-		dtbo_remote=$(ssh_do "head -c $dtbo_sz /dev/disk/by-partlabel/dtbo$other | sha256sum" | cut -d' ' -f1)
-		[ "$dtbo_remote" = "$dtbo_local" ] || { echo "ERROR: dtbo$other contains non-empty vendor DTBO (flash empty dtbo.img once via fastboot)" >&2; exit 1; }
-	fi
-	;;
-*[!0]*)
-	echo "ERROR: dtbo$other is neither zeroed nor matching empty dtbo.img; ABL may apply conflicting vendor overlays" >&2
-	exit 1
-	;;
-esac
 
 # Do NOT call `qbootctl -s`: upstream linux-msm/qbootctl (bootctrl_impl.c:551-558)
 # swaps TypeGUIDs in the opposite direction of the Active flag on LUN 4, leaving

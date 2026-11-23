@@ -6,6 +6,7 @@ opens Chromium in native --app window mode. Exits automatically when closed.
 """
 import json
 import os
+import secrets
 import shutil
 import socket
 import subprocess
@@ -16,7 +17,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 CHG_DIR = "/sys/class/power_supply/mp2650-charger"
 BAT_DIR = "/sys/class/power_supply/bq27541-0"
-CONF_PATH = "/etc/lemonades/charge-limit.conf"
+CONF_PATH = "/etc/lemonades/charge-limit/charge-limit.conf"
+LEGACY_CONF_PATH = "/etc/lemonades/charge-limit.conf"
+CSRF_TOKEN = secrets.token_urlsafe(24)
+LISTEN_PORT = 18942
 
 
 def read_str(path, default=""):
@@ -146,7 +150,7 @@ HTML = """<!doctype html>
       <div><div class="stat-label">Pin hiện tại</div><div class="stat-val" id="cap">--%</div></div>
       <div><div class="stat-label">Điện áp / Dòng</div><div class="stat-val" id="vi">--</div></div>
       <div><div class="stat-label">Nguồn USB-PD</div><div class="stat-val" id="pd">--</div></div>
-      <div><div class="stat-label">Mạch sạc PM8150B</div><div class="stat-val" id="hw">--</div></div>
+      <div><div class="stat-label">Mạch sạc MP2650</div><div class="stat-val" id="hw">--</div></div>
     </div>
   </div>
 
@@ -211,7 +215,9 @@ async function save() {
     behaviour: inhibit.checked ? 'inhibit-charge' : 'auto'
   };
   const r = await fetch('/api/apply', {
-    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+    method: 'POST',
+    headers: {'Content-Type':'application/json', 'X-CSRF-Token':'__CSRF_TOKEN__'},
+    body: JSON.stringify(body)
   });
   const res = await r.json();
   if (res.ok) { msg.textContent = 'Đã áp dụng & lưu cài đặt!'; refresh(); }
@@ -240,9 +246,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _valid_origin(self):
+        host = self.headers.get("Host", "")
+        allowed_host = f"127.0.0.1:{LISTEN_PORT}"
+        if host != allowed_host:
+            return False
+        origin = self.headers.get("Origin")
+        if origin is not None and origin != f"http://{allowed_host}":
+            return False
+        return True
+
     def do_GET(self):
         if self.path == "/" or self.path.startswith("/?"):
-            self._send(200, "text/html; charset=utf-8", HTML.encode("utf-8"))
+            page = HTML.replace("__CSRF_TOKEN__", CSRF_TOKEN)
+            self._send(200, "text/html; charset=utf-8", page.encode("utf-8"))
         elif self.path == "/api/state":
             self._send(200, "application/json", json.dumps(get_state()).encode("utf-8"))
         else:
@@ -250,6 +267,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/api/apply":
+            if not self._valid_origin() or not secrets.compare_digest(
+                self.headers.get("X-CSRF-Token", ""), CSRF_TOKEN
+            ):
+                self._send(403, "application/json", json.dumps({"ok": False, "error": "Forbidden"}).encode("utf-8"))
+                return
             n = int(self.headers.get("Content-Length", "0"))
             try:
                 body = json.loads(self.rfile.read(n).decode("utf-8"))
@@ -266,10 +288,12 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    global LISTEN_PORT
     if len(sys.argv) > 1 and sys.argv[1] == "--apply-saved":
         vals = {}
-        if os.path.isfile(CONF_PATH):
-            with open(CONF_PATH) as f:
+        conf_file = CONF_PATH if os.path.isfile(CONF_PATH) else LEGACY_CONF_PATH
+        if os.path.isfile(conf_file):
+            with open(conf_file) as f:
                 for line in f:
                     if "=" in line:
                         k, v = line.strip().split("=", 1)
@@ -296,8 +320,11 @@ def main():
             port = sock.getsockname()[1]
             sock.close()
             srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        LISTEN_PORT = port
         t = threading.Thread(target=srv.serve_forever, daemon=True)
         t.start()
+    else:
+        LISTEN_PORT = port
 
     url = f"http://127.0.0.1:{port}"
     browser = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("firefox")
@@ -313,6 +340,11 @@ def main():
             "--window-size=440,700",
             "--class=lemonades-charge-limit",
         ])
+        p.wait()
+        if srv is not None:
+            srv.shutdown()
+    elif browser and "firefox" in os.path.basename(browser):
+        p = subprocess.Popen([browser, "--new-window", url])
         p.wait()
         if srv is not None:
             srv.shutdown()

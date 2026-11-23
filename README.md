@@ -36,7 +36,7 @@ build/                      Thư mục build cô lập và đầu ra build/out/{
 ## Thiết kế `boot.img` tự đủ (Zero-Touch Provisioning)
 
 Dự án cố ý để `initramfs/init.c` tự đảm bảo các cấu hình phần cứng đặc thù của OnePlus 9R trên `/newroot` trước khi `switch_root` để 1 file `boot.img` hoạt động ngay cả khi flash lại `userdata` trắng:
-- **Charge Limit & Battery Bypass**: tự cài `/usr/local/bin/lemonades-charge-gui`, shortcut **Charge Limit**, udev rule (`0666` trên `/sys/class/power_supply/mp2650-charger/charge_*`), và `lemonades-charge-limit.service` (tự khôi phục ngưỡng đã lưu sau mỗi lần reboot).
+- **Charge Limit & Battery Bypass**: tự cài `/usr/local/bin/lemonades-charge-gui`, shortcut **Charge Limit**, udev rule (`0660 root:wheel` trên `/sys/class/power_supply/mp2650-charger/charge_*`), và `lemonades-charge-limit.service` (tự khôi phục cấu hình tại `/etc/lemonades/charge-limit/charge-limit.conf`, tách biệt hoàn toàn với backup SSH `/etc/lemonades/ssh/authorized_keys` `0700`/`0600`).
 - **Audio**: ALSA UCM2 cho `SM8250-OnePlus-9R` (**Stereo Speakers** + **DisplayPort / HDMI Output**) và WirePlumber `51-lemonades-audio.conf` (`S16LE`, `48000 Hz`, `period-size = 1024`, `disable-mmap = true`).
 - **Truy cập từ xa & Containers**: `sshd` drop-in **chỉ chấp nhận SSH key** (`PermitRootLogin prohibit-password`, `PasswordAuthentication no`), sao lưu/khôi phục `authorized_keys`, chuẩn hoá `subuid`/`subgid` và USB gadget `ACM + NCM` (`172.16.42.1/24` + rescue console `/dev/ttyACM0`).
 

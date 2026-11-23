@@ -30,10 +30,10 @@ index f3c0d1006..6098d5acd 100644
  obj-$(CONFIG_CHARGER_MAX77759)	+= max77759_charger.o
 diff --git a/drivers/power/supply/mps_mp2650_charger.c b/drivers/power/supply/mps_mp2650_charger.c
 new file mode 100644
-index 000000000..398161301
+index 000000000..abe702a82
 --- /dev/null
 +++ b/drivers/power/supply/mps_mp2650_charger.c
-@@ -0,0 +1,394 @@
+@@ -0,0 +1,405 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Monolithic Power Systems MP2650 2S Buck-Boost Charge Limit & Bypass Driver
@@ -67,7 +67,7 @@ index 000000000..398161301
 +#define MP2650_WTD_TIMER_MASK		GENMASK(5, 4)
 +
 +#define MP2650_REG_STATUS		0x13
-+#define MP2650_VIN_PG_NO_BIT		BIT(1)	/* 0 = VIN power good, 1 = no VIN */
++#define MP2650_VIN_PG_BIT		BIT(1)	/* 1 = VIN power good, 0 = no VIN */
 +#define MP2650_CHG_STAT_MASK		GENMASK(3, 2)
 +#define MP2650_CHG_STAT_NOT_CHARGING	0
 +#define MP2650_CHG_STAT_PRE_CHARGE	BIT(2)
@@ -124,9 +124,9 @@ index 000000000..398161301
 +	return val.intval;
 +}
 +
-+static void mp2650_evaluate_locked(struct mp2650_charger *chg)
++static int mp2650_evaluate_locked(struct mp2650_charger *chg)
 +{
-+	int cap, reg08, ret;
++	int cap, reg08, verify, ret;
 +	bool want_enable = true;
 +	bool cur_hw_en;
 +
@@ -148,20 +148,31 @@ index 000000000..398161301
 +
 +	reg08 = i2c_smbus_read_byte_data(chg->client, MP2650_REG_CTRL0);
 +	if (reg08 < 0)
-+		return;
++		return reg08;
 +
 +	cur_hw_en = !!(reg08 & MP2650_CHG_EN_BIT);
 +	if (want_enable != cur_hw_en) {
 +		ret = mp2650_update_bits(chg->client, MP2650_REG_CTRL0,
 +					 MP2650_CHG_EN_BIT,
 +					 want_enable ? MP2650_CHG_EN_BIT : 0);
-+		if (ret == 0)
-+			power_supply_changed(chg->psy);
-+		else
++		if (ret < 0) {
 +			dev_err(&chg->client->dev,
 +				"failed to set CHG_EN=%d: %d\n",
 +				want_enable, ret);
++			return ret;
++		}
++		verify = i2c_smbus_read_byte_data(chg->client, MP2650_REG_CTRL0);
++		if (verify < 0)
++			return verify;
++		if (!!(verify & MP2650_CHG_EN_BIT) != want_enable) {
++			dev_err(&chg->client->dev,
++				"REG08 readback mismatch (got 0x%02x, want CHG_EN=%d)\n",
++				verify, want_enable);
++			return -EIO;
++		}
++		power_supply_changed(chg->psy);
 +	}
++	return 0;
 +}
 +
 +static void mp2650_poll_work(struct work_struct *work)
@@ -222,7 +233,7 @@ index 000000000..398161301
 +			ret = regval;
 +			break;
 +		}
-+		val->intval = !(regval & MP2650_VIN_PG_NO_BIT);
++		val->intval = !!(regval & MP2650_VIN_PG_BIT);
 +		break;
 +	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
 +		val->intval = chg->behaviour;
@@ -258,7 +269,7 @@ index 000000000..398161301
 +			break;
 +		}
 +		chg->behaviour = val->intval;
-+		mp2650_evaluate_locked(chg);
++		ret = mp2650_evaluate_locked(chg);
 +		break;
 +	case POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD:
 +		if (val->intval < 20 || val->intval > 95) {
@@ -268,7 +279,7 @@ index 000000000..398161301
 +		chg->start_threshold = val->intval;
 +		if (chg->start_threshold >= chg->end_threshold && chg->end_threshold < 100)
 +			chg->end_threshold = min(100, chg->start_threshold + 5);
-+		mp2650_evaluate_locked(chg);
++		ret = mp2650_evaluate_locked(chg);
 +		break;
 +	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
 +		if (val->intval < 40 || val->intval > 100) {
@@ -278,7 +289,7 @@ index 000000000..398161301
 +		chg->end_threshold = val->intval;
 +		if (chg->start_threshold >= chg->end_threshold)
 +			chg->start_threshold = max(20, chg->end_threshold - 5);
-+		mp2650_evaluate_locked(chg);
++		ret = mp2650_evaluate_locked(chg);
 +		break;
 +	default:
 +		ret = -EINVAL;

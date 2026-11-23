@@ -5,7 +5,7 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 OUT=${1:-$ROOT/build/out/initrd.cpio.gz}
-CC=${CC:-aarch64-linux-gnu-gcc}
+CC=${CC:-${CROSS_COMPILE:-aarch64-linux-gnu-}gcc}
 TMP="$ROOT/build/initramfs"
 
 command -v "$CC" >/dev/null || { echo "mkinitramfs: $CC not found" >&2; exit 1; }

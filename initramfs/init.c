@@ -447,9 +447,16 @@ static void ensure_ssh_access(void)
 		"PermitRootLogin prohibit-password\n"
 		"PasswordAuthentication no\n";
 	static const char key[] = "/newroot/root/.ssh/authorized_keys";
-	static const char backup[] = "/newroot/etc/lemonades/authorized_keys";
+	static const char backup_dir[] = "/newroot/etc/lemonades/ssh";
+	static const char backup[] = "/newroot/etc/lemonades/ssh/authorized_keys";
+	static const char legacy_backup[] = "/newroot/etc/lemonades/authorized_keys";
 	char buf[8192];
 	int fd, n;
+
+	mkdir_p("/newroot/etc/lemonades");
+	if (chmod("/newroot/etc/lemonades", 0755) != 0) {}
+	mkdir_p(backup_dir);
+	if (chmod(backup_dir, 0700) != 0) {}
 
 	mkdir_p("/newroot/etc/ssh/sshd_config.d");
 	fd = open("/newroot/etc/ssh/sshd_config.d/99-lemonades.conf",
@@ -469,16 +476,19 @@ static void ensure_ssh_access(void)
 		n = read(fd, buf, sizeof(buf));
 		close(fd);
 		if (n > 0) {
-			mkdir_p("/newroot/etc/lemonades");
 			int bfd = open(backup, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
 			if (bfd >= 0) {
 				if (write(bfd, buf, n) < 0) {}
 				close(bfd);
+				if (chmod(backup, 0600) != 0) {}
 			}
+			unlink(legacy_backup);
 		}
 		if (chmod(key, 0600) != 0) {}
 	} else {
 		fd = open(backup, O_RDONLY | O_CLOEXEC);
+		if (fd < 0)
+			fd = open(legacy_backup, O_RDONLY | O_CLOEXEC);
 		if (fd < 0) {
 			log_kmsg("lemonades-init: no root authorized_keys or backup\n");
 		} else {
@@ -495,7 +505,7 @@ static void ensure_ssh_access(void)
 		}
 	}
 
-	log_kmsg("lemonades-init: sshd drop-in ensured (ListenAddress 0.0.0.0)\n");
+	log_kmsg("lemonades-init: sshd drop-in ensured (key-only root)\n");
 }
 
 static void write_newroot_file(const char *path, const char *content, size_t len)
@@ -608,15 +618,22 @@ static void ensure_charge_limit_app(void)
 		"Categories=Settings;System;\n";
 	static const char udev_rule[] =
 		"SUBSYSTEM==\"power_supply\", KERNEL==\"mp2650-charger\", "
-		"RUN+=\"/bin/chmod 0666 /sys/class/power_supply/mp2650-charger/charge_behaviour "
+		"RUN+=\"/bin/sh -c 'grp=wheel; getent group wheel >/dev/null || grp=sudo; "
+		"chgrp $grp /sys/class/power_supply/mp2650-charger/charge_behaviour "
 		"/sys/class/power_supply/mp2650-charger/charge_control_start_threshold "
-		"/sys/class/power_supply/mp2650-charger/charge_control_end_threshold\"\n";
+		"/sys/class/power_supply/mp2650-charger/charge_control_end_threshold && "
+		"chmod 0660 /sys/class/power_supply/mp2650-charger/charge_behaviour "
+		"/sys/class/power_supply/mp2650-charger/charge_control_start_threshold "
+		"/sys/class/power_supply/mp2650-charger/charge_control_end_threshold'\"\n";
 	static const char svc[] =
 		"[Unit]\n"
 		"Description=Restore OnePlus 9R MP2650 Charge Limit\n"
 		"After=local-fs.target\n\n"
 		"[Service]\n"
 		"Type=oneshot\n"
+		"ExecStartPre=/bin/sh -c 'grp=wheel; getent group wheel >/dev/null || grp=sudo; "
+		"chgrp $grp /etc/lemonades/charge-limit/charge-limit.conf && "
+		"chmod 0660 /etc/lemonades/charge-limit/charge-limit.conf'\n"
 		"ExecStart=/usr/local/bin/lemonades-charge-gui --apply-saved\n\n"
 		"[Install]\n"
 		"WantedBy=multi-user.target\n";
@@ -648,14 +665,15 @@ static void ensure_charge_limit_app(void)
 	write_newroot_file("/newroot/etc/udev/rules.d/99-lemonades-charge-limit.rules",
 			   udev_rule, sizeof(udev_rule) - 1);
 
-	mkdir_p("/newroot/etc/lemonades");
-	if (chmod("/newroot/etc/lemonades", 0777) != 0) {}
-	if (access("/newroot/etc/lemonades/charge-limit.conf", F_OK) != 0) {
+	mkdir_p("/newroot/etc/lemonades/charge-limit");
+	if (chmod("/newroot/etc/lemonades", 0755) != 0) {}
+	if (chmod("/newroot/etc/lemonades/charge-limit", 0755) != 0) {}
+	if (access("/newroot/etc/lemonades/charge-limit/charge-limit.conf", F_OK) != 0) {
 		static const char def_conf[] = "START=75\nEND=80\nBEHAVIOUR=auto\n";
-		write_newroot_file("/newroot/etc/lemonades/charge-limit.conf",
+		write_newroot_file("/newroot/etc/lemonades/charge-limit/charge-limit.conf",
 				   def_conf, sizeof(def_conf) - 1);
 	}
-	if (chmod("/newroot/etc/lemonades/charge-limit.conf", 0666) != 0) {}
+	if (chmod("/newroot/etc/lemonades/charge-limit/charge-limit.conf", 0660) != 0) {}
 
 	mkdir_p("/newroot/etc/systemd/system/multi-user.target.wants");
 	write_newroot_file("/newroot/etc/systemd/system/lemonades-charge-limit.service",

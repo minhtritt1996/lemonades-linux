@@ -76,6 +76,24 @@ def main() -> int:
             print(f"ERROR: missing input file: {p}", file=sys.stderr)
             return 1
 
+    kernel_offset = 0x00008000
+    ramdisk_offset = 0x01000000
+    dtb_offset = 0x01F00000
+    kernel_size = os.path.getsize(args.kernel)
+    if kernel_size >= (dtb_offset - kernel_offset):
+        print(
+            f"ERROR: kernel {kernel_size} bytes >= dtb_offset - kernel_offset "
+            f"({dtb_offset - kernel_offset} bytes)",
+            file=sys.stderr,
+        )
+        return 1
+    if kernel_size >= (ramdisk_offset - kernel_offset):
+        print(
+            f"    [NOTE] Image.gz is {kernel_size} bytes (> ramdisk_offset gap "
+            f"{ramdisk_offset - kernel_offset}); SM8250 ABL v2 dynamically relocates ramdisk.",
+            file=sys.stderr,
+        )
+
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     os.makedirs(os.path.dirname(os.path.abspath(args.dtbo_out)), exist_ok=True)
 
