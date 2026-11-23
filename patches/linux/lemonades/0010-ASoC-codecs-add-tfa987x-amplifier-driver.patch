@@ -44,7 +44,7 @@ index 3d122ace7..28e5afe7d 100644
  obj-$(CONFIG_SND_SOC_TLV320ADC3XXX)	+= snd-soc-tlv320adc3xxx.o
 diff --git a/sound/soc/codecs/tfa987x.c b/sound/soc/codecs/tfa987x.c
 new file mode 100644
-index 000000000..301191cbf
+index 000000000..657243fa9
 --- /dev/null
 +++ b/sound/soc/codecs/tfa987x.c
 @@ -0,0 +1,323 @@
@@ -195,7 +195,7 @@ index 000000000..301191cbf
 +
 +static bool tfa987x_setup_dcdc(struct device *dev, struct regmap *rmap, u16 rev)
 +{
-+	u32 mcc, dcvof, dcvos, dctrip, dctrip2 = 0;
++	u32 mcc = 0, dcvof = 0, dcvos = 0, dctrip = 0, dctrip2 = 0;
 +	int i;
 +	u32 *dest[] = { &mcc, &dcvof, &dcvos, &dctrip, &dctrip2 };
 +	const char *props[] = { "max-coil-current",
@@ -241,7 +241,7 @@ index 000000000..301191cbf
 +					FIELD_PREP(TFA9874_DCDC_CTRL6_DCVOF_MSK, dcvof));
 +
 +		if (dcvos)
-+			regmap_update_bits(rmap, TFA987X_DCDC_CTRL0,
++			regmap_update_bits(rmap, TFA987X_DCDC_CTRL6,
 +					TFA9874_DCDC_CTRL6_DCVOS_MSK,
 +					FIELD_PREP(TFA9874_DCDC_CTRL6_DCVOS_MSK, dcvos));
 +		break;

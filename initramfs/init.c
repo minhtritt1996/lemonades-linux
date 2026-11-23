@@ -517,19 +517,17 @@ static void ensure_audio_config(void)
 		"Syntax 3\n\n"
 		"SectionUseCase.\"HiFi\" {\n"
 		"\tFile \"/Qualcomm/sm8250/OnePlus9R-HiFi.conf\"\n"
-		"\tComment \"Stereo Speakers\"\n"
-		"}\n\n"
-		"SectionUseCase.\"HDMI\" {\n"
-		"\tFile \"/Qualcomm/sm8250/OnePlus9R-HDMI.conf\"\n"
-		"\tComment \"DisplayPort / HDMI Audio\"\n"
+		"\tComment \"HiFi Quality Music\"\n"
 		"}\n";
 	static const char ucm_hifi[] =
 		"SectionVerb {\n"
 		"\tEnableSequence [\n"
 		"\t\tcset \"name='TERT_MI2S_RX Audio Mixer MultiMedia1' 1\"\n"
+		"\t\tcset \"name='DISPLAY_PORT_RX Audio Mixer MultiMedia2' 1\"\n"
 		"\t]\n\n"
 		"\tDisableSequence [\n"
 		"\t\tcset \"name='TERT_MI2S_RX Audio Mixer MultiMedia1' 0\"\n"
+		"\t\tcset \"name='DISPLAY_PORT_RX Audio Mixer MultiMedia2' 0\"\n"
 		"\t]\n\n"
 		"\tValue {\n"
 		"\t\tTQ \"HiFi\"\n"
@@ -543,26 +541,15 @@ static void ensure_audio_config(void)
 		"\t\tPlaybackRate 48000\n"
 		"\t\tPlaybackChannels 2\n"
 		"\t}\n"
-		"}\n";
-	static const char ucm_hdmi[] =
-		"SectionVerb {\n"
-		"\tEnableSequence [\n"
-		"\t\tcset \"name='DISPLAY_PORT_RX Audio Mixer MultiMedia2' 1\"\n"
-		"\t]\n\n"
-		"\tDisableSequence [\n"
-		"\t\tcset \"name='DISPLAY_PORT_RX Audio Mixer MultiMedia2' 0\"\n"
-		"\t]\n\n"
-		"\tValue {\n"
-		"\t\tTQ \"HiFi\"\n"
-		"\t}\n"
 		"}\n\n"
 		"SectionDevice.\"HDMI\" {\n"
 		"\tComment \"DisplayPort / HDMI Output\"\n\n"
 		"\tValue {\n"
-		"\t\tPlaybackPriority 200\n"
+		"\t\tPlaybackPriority 100\n"
 		"\t\tPlaybackPCM \"hw:${CardId},1\"\n"
 		"\t\tPlaybackRate 48000\n"
 		"\t\tPlaybackChannels 2\n"
+		"\t\tJackControl \"DP0 Jack\"\n"
 		"\t}\n"
 		"}\n";
 	static const char wp_rule[] =
@@ -592,8 +579,7 @@ static void ensure_audio_config(void)
 			   ucm_card, sizeof(ucm_card) - 1);
 	write_newroot_file("/newroot/usr/share/alsa/ucm2/Qualcomm/sm8250/OnePlus9R-HiFi.conf",
 			   ucm_hifi, sizeof(ucm_hifi) - 1);
-	write_newroot_file("/newroot/usr/share/alsa/ucm2/Qualcomm/sm8250/OnePlus9R-HDMI.conf",
-			   ucm_hdmi, sizeof(ucm_hdmi) - 1);
+	unlink("/newroot/usr/share/alsa/ucm2/Qualcomm/sm8250/OnePlus9R-HDMI.conf");
 	unlink("/newroot/usr/share/alsa/ucm2/conf.d/sm8250/SM8250-OnePlus-9R.conf");
 	if (symlink("../../Qualcomm/sm8250/SM8250-OnePlus-9R.conf",
 		    "/newroot/usr/share/alsa/ucm2/conf.d/sm8250/SM8250-OnePlus-9R.conf") != 0) {}

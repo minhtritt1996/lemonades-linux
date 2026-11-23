@@ -12,10 +12,10 @@ index 1c86e7e98..161993ec0 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm8250-sony-xperia-edo-pdx203.dtb
 diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-common.dtsi b/arch/arm64/boot/dts/qcom/sm8250-oneplus-common.dtsi
 new file mode 100644
-index 000000000..c5e20a356
+index 000000000..d1ed5e164
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-common.dtsi
-@@ -0,0 +1,1480 @@
+@@ -0,0 +1,1481 @@
 +// SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 +/*
 + * Copyright (c) 2026, The Linux Foundation.
@@ -887,7 +887,7 @@ index 000000000..c5e20a356
 +
 +	connector {
 +		compatible = "usb-c-connector";
-+		op-sink-microwatt = <10000000>;
++		op-sink-microwatt = <18000000>;
 +		power-role = "dual";
 +		data-role = "dual";
 +		try-power-role = "sink";
@@ -899,7 +899,8 @@ index 000000000..c5e20a356
 +		sink-pdos = <PDO_FIXED(5000, 3000,
 +			     PDO_FIXED_DUAL_ROLE |
 +			     PDO_FIXED_USB_COMM |
-+			     PDO_FIXED_DATA_SWAP)>;
++			     PDO_FIXED_DATA_SWAP)>,
++			    <PDO_FIXED(9000, 3000, 0)>;
 +
 +		altmodes {
 +			displayport {
