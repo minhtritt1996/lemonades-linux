@@ -1,42 +1,76 @@
 # lemonades-linux
 
-Mainline Linux + Denial Mobile bring-up workspace cho **OnePlus 9R (`lemonades`, Qualcomm SM8250 / Snapdragon 865)**.
+Mainline Linux (`v7.3.5`) + Denial Mobile cho **OnePlus 9R (`lemonades`, Qualcomm SM8250 / Snapdragon 870)**, khởi động trực tiếp qua **XBL → ABL gốc của OnePlus** bằng `boot.img` v2 và `dtbo.img` trống.
 
-Tài liệu này tổng hợp toàn bộ kết quả nghiên cứu ban đầu để tiếp tục phát triển ở session mới.
+## Trạng thái phần cứng & Thành tựu đã kiểm chứng
 
----
+| Thành phần | Trạng thái | Chi tiết kiểm chứng trên máy thật |
+| :--- | :---: | :--- |
+| **Khởi động nhanh** | ✅ | **~5.6 – 5.9 giây** tổng thời gian (`~2.0s` kernel/initramfs + `~3.1s` tới `graphical.target`). |
+| **Lưu trữ UFS** | ✅ | Clean DTS theo kiến trúc Nura OS 7.2, hết hoàn toàn lỗi sập nguồn khi xả cache nặng — vượt qua **sysbench 20 GB (4 luồng)** ở **`306.01 MiB/s`** + 30s `rndrw`/`fsync`, 0 lỗi `dmesg`. |
+| **Màn hình & Cảm ứng** | ✅ | OLED `samsung,amb655x` (`1080x2400 @ 120Hz`, CMD + DSC), cảm ứng `syna,s3908`, GPU **Adreno A650** tăng tốc phần cứng đầy đủ. |
+| **Xuất màn hình ngoài (DisplayPort)** | ✅ | Chạy đồng thời **2 màn hình** (`1080x2400 @ 120Hz` + `1920x1080 @ 100Hz`) qua hub USB-C mà không bị nhiễu/lag kể cả khi tắt/bật màn điện thoại (patch `dpu_rm` giữ `LM_0/1` cho `DSI-1`). |
+| **USB 3.0 / OTG / Hub** | ✅ | SuperSpeed **5 Gbps** đồng thời với DisplayPort (`Pin Assignment D`); test đọc SSD NVMe qua hub UGREEN đạt **`257 MB/s`**. |
+| **Mạng LAN Gigabit (USB-C Hub)** | ✅ | Built-in `USBNET`, `AX88179A`, `RTL8152/8153`, `CDC-NCM`, `CDC-ECM`; nhận **`1000 Mbps`** full Gigabit. |
+| **Sạc nhanh USB-PD** | ✅ | Đàm phán **USB-PD 9V / 3A** (`18W` operational, `9.0V` qua hub PD), đọc pin qua `ti,bq27541`. |
+| **Loa ngoài Stereo** | ✅ | 2× ampli **NXP `tfa9874`** (`15-0034` & `15-0035`) qua `TERT_MI2S_RX`, đã bật bộ **DC-DC Boost** (`SYS_CTRL0[4]`), tự cấu hình ALSA UCM2 + WirePlumber (`S16LE`, `RW_INTERLEAVED`) từ `boot.img`. |
+| **Âm thanh HDMI / DisplayPort** | ✅ | Hoạt động qua `DISPLAY_PORT_RX` (cấu hình DP audio trong `hw_params` trước `q6afe` port `0x6020`), hiện song song cùng Loa ngoài trong **Settings → Sound**. |
+| **Wi-Fi 6 & Bluetooth** | ✅ | Qualcomm **QCA6390** (`ath11k_pci` + `hci_uart_qca`), rebind Bluetooth chạy nền không làm chậm boot. |
+| **Containers & Ảo hóa (Incus)** | ✅ | Tích hợp sẵn toàn bộ Kconfig built-in cho **Incus** (`BRIDGE`, `BTRFS`, `OVERLAY`, `SQUASHFS`, `DM_THIN_PROVISIONING`, `VHOST/VSOCK`, `MACVLAN/IPVLAN/VXLAN`, `NFT_FIB`, `CHECKPOINT_RESTORE`). |
+| **SLPI / Cảm biến** | 🟡 | SLPI boot sạch không còn crash (nhờ `fastrpc_mem` CMA + revert `fastrpc`), `hexagonrpcd` đọc/ghi xong registry; cảm biến vật lý qua `ssccli` vẫn đang tiếp tục điều tra. |
 
-## 1. Kiến trúc boot & phân vùng (đã xác nhận từ Nura OS `oneplus-kebab`)
+## Cấu trúc repository
 
-OnePlus 8T (`kebab`) và OnePlus 9R (`lemonades`) dùng chung nền tảng **SM8250** và kiến trúc bootloader **XBL -> ABL gốc của OnePlus** (không dùng Mu-Silicium UEFI hay U-Boot):
+```text
+build.sh                    Script build kernel, initramfs, boot.img v2, export-patches & check
+configs/linux/              Fragment Kconfig (base.config + lemonades.config)
+initramfs/                  Early init (PID 1): mount firmware, USB gadget, tự cấu hình SSH/UCM2/WirePlumber
+patches/linux/series        Thứ tự áp dụng 14 patch lên upstream/linux (v7.3.5)
+patches/linux/lemonades/    Các patch kernel cho OnePlus 9R (DTS, panel, touch, TFA9874, DPU, DP audio, FastRPC)
+scripts/                    Công cụ đóng gói boot.img v2 + dtbo.img trống, mkinitramfs, flash A/B an toàn
+upstream/                   Clone read-only Linux v7.3.5 (không commit vào git)
+build/                      Thư mục build cô lập và đầu ra build/out/{boot.img,dtbo.img}
+```
 
-- **Boot image format**: Android `boot.img` `header_version = 2`, `pagesize = 4096` (`mkbootimg`), flash qua `fastboot`.
-- **DTBO**: Cần `dtbo.img` trống (như `sm8250-oneplus-kebab-empty.dts` của Nura) khi flash `dtbo` để ABL không ghép `dtbo` Android downstream lên DTB mainline.
-- **Slot & Dynamic Partitions**: Máy dùng **A/B (`_a`/`_b`)** (`soc-qcom-qbootctl`) và dynamic partitions nằm trong `super` (trên `kebab` là `/dev/sda15`; cần kiểm tra chính xác partition table của `lemonades`).
-- **Tài liệu tham khảo Nura OS (postmarketOS)**:
-  - Device package `oneplus-kebab`: `https://gitlab.nura.eco/nura/pmaports/-/tree/main/device/testing/device-oneplus-kebab`
-  - Kernel SM8250: `https://gitlab.nura.eco/soc/qualcomm-sm8250/linux` (tag `sm8250-7.2.0_git20261010`)
-  - DTS chung OnePlus SM8250: `arch/arm64/boot/dts/qcom/sm8250-oneplus-common.dtsi`
-- **Tài liệu tham khảo cùng hệ sinh thái Denial**: `picasso-linux` (cách tổ chức `build.sh`, patch series, `initramfs/init.c`, `picasso-gnss` + `org.dmail.Location1` bridge, `hexagonrpcd` `s2idle` hook, WirePlumber/BlueZ drop-ins).
+## Tự cấu hình từ `boot.img`
 
----
+`initramfs/init.c` tự động đảm bảo các cấu hình thiết yếu trên `/newroot` trước khi `switch_root`, giúp máy chạy ngay sau khi flash lại `userdata` mới mà không cần chỉnh tay:
+- ALSA UCM2 cho `SM8250-OnePlus-9R` (gồm cả **Stereo Speakers** và **DisplayPort / HDMI Output**).
+- WirePlumber rule `51-lemonades-audio.conf` (`S16LE`, `48000 Hz`, `period-size = 1024`, `disable-mmap = true`).
+- `sshd` drop-in (`ListenAddress 0.0.0.0`, sao lưu/khôi phục `authorized_keys`) và `subuid`/`subgid` cho Droidloom/containers.
+- USB gadget `ACM + NCM` (`172.16.42.1/24` + rescue console `/dev/ttyACM0`).
 
-## 2. Kết quả phân tích DTS hiện tại ([pmos_9r_safe.dts](reference/pmos_9r_safe.dts))
+## Build từ mã nguồn
 
-### Lỗi đã xác định: Sập nguồn khi flush khối lượng lớn dữ liệu từ RAM cache xuống UFS trên mainline Linux
+```bash
+# 1. Chuẩn bị cây upstream read-only (chỉ làm 1 lần)
+git clone --branch v7.3.5 --depth 1 \
+  https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git upstream/linux
 
-Đối chiếu trực tiếp `reference/pmos_9r_safe.dts` với `sm8250-oneplus-common.dtsi` của Nura OS (`soc/qualcomm-sm8250/linux`):
+# 2. Build kernel, initramfs và đóng gói boot.img v2 + dtbo.img trống
+./build.sh linux
+./build.sh initramfs
+./build.sh bootimg
 
-1. **Thiếu `regulator-allow-set-load;` và `regulator-allowed-modes` trên LDO nuôi UFS**:
-   - `ufshc@1d84000` (dòng `1997–2002`) đặt `vcc-max-microamp`, `vccq-max-microamp`, `vccq2-max-microamp` = `800000 uA` (`0xc3500`), nhưng `ldo17` (`vreg_l17a_3p0`, dòng `5573–5579`) và `ldo6` (`vreg_l6a_1p2`, dòng `5506–5512`) trong `pmos_9r_safe.dts` **bị thiếu**:
-     ```dts
-     regulator-allow-set-load;
-     regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
-                                RPMH_REGULATOR_MODE_HPM>;
-     ```
-     *(Trong `sm8250-oneplus-common.dtsi` của Nura OS, cả `vreg_l6a_1p2` và `vreg_l17a_3p0` đều có 2 thuộc tính này.)*
-   - Tương tự, `ldo5` (`vreg_l5a_0p88`, dòng `5499–5504`) và `ldo9` (`vreg_l9a_1p2`, dòng `5521–5527`) cấp cho `phy@1d87000` cũng nên kiểm tra thêm `regulator-allow-set-load;` / `regulator-always-on;`.
-2. **Clock scaling UFS (`opp-table`)**:
-   - `ufshc@1d84000` (dòng `2005–2018`) có 2 mức OPP `37.5 MHz` <-> `300 MHz`. Khi ghi burst lớn mà `vcc`/`vccq` chưa vote tải HPM đúng, quá trình chuyển xung + `auto-hibern8` dễ làm tụt áp hoặc treo NoC -> Watchdog cắt nguồn.
-3. **Thiếu `ramoops`**:
-   - `pmos_9r_safe.dts` chưa có node `ramoops` trong `reserved-memory`, nên chưa giữ được `console-ramoops` sau khi sập nguồn.
+# 3. Kiểm chứng sạch (apply toàn bộ series lên cây sạch + build Image.gz & DTB)
+./build.sh check
+```
+
+Đầu ra nằm tại `build/out/boot.img` và `build/out/dtbo.img`.
+
+## Hướng dẫn Flash
+
+Tải `boot.img` và `dtbo.img` từ trang [Releases](https://github.com/minhtritt1996/lemonades-linux/releases) (hoặc tự build ở trên):
+
+```bash
+# Thử nghiệm an toàn trên RAM (không ghi UFS)
+fastboot boot boot.img
+
+# Flash cố định vào cả 2 slot A/B
+fastboot flash boot_a boot.img
+fastboot flash boot_b boot.img
+fastboot flash dtbo_a dtbo.img
+fastboot flash dtbo_b dtbo.img
+```
+
+> **Cảnh báo A/B**: Không dùng `qbootctl -s <slot>` để chuyển slot vì bug đảo ngược TypeGUID trên LUN 4 của `linux-msm/qbootctl` có thể khiến ABL không khởi động được. Luôn chuyển slot bằng `fastboot --set-active=<a|b>`.

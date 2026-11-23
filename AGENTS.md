@@ -13,7 +13,7 @@ OnePlus 9R / `lemonades` / SM8250, boot qua XBL -> ABL gốc của OnePlus bằn
 
 ## 2. Nguồn giá trị phần cứng
 
-- DTS nền chính: `reference/lemonades.dts` (mainline, hỗ trợ DisplayPort + USB 3.0 + OTG + Audio SoundWire + `samsung,amb655x` + `syna,s3908` + `bq27541` + `qca6390`).
+- DTS nền chính: `patches/linux/lemonades/0001-arm64-dts-qcom-add-oneplus-lemonades.patch` (`sm8250-oneplus-common.dtsi` + `sm8250-oneplus-lemonades.dts` theo kiến trúc Nura OS 7.2: hỗ trợ DisplayPort + HDMI Audio + USB 3.0 + OTG + dual `nxp,tfa9874` + `samsung,amb655x` + `syna,s3908` + `bq27541` + `qca6390` + USB-PD 9V).
 - Tham số `boot.img` v2 chuẩn ABL OnePlus 9R: `pagesize=4096`, `header_version=2`, `--kernel_offset 0x8000`, `--ramdisk_offset 0x1000000`, `--tags_offset 0x100`, `--dtb_offset 0x1f00000`, `dtbo.img` trống.
 
 ## 3. Kiểm chứng
@@ -29,6 +29,5 @@ patches/linux/lemonades/    patch delta cho OnePlus 9R (lemonades)
 configs/linux/              fragment Kconfig
 scripts/                    build, đóng gói boot.img v2 + dtbo.img trống, mkinitramfs
 initramfs/                  init (PID 1) và helper nằm trong ramdisk
-reference/                  lemonades.dts nền đối chiếu
 build/                      cây build cô lập + build/out
 ```
