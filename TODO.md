@@ -8,7 +8,8 @@
 - [x] **USB 3.0 5 Gbps + Gigabit LAN + USB-PD 9V/3A**: SuperSpeed 5 Gbps đồng thời DisplayPort, `AX88179A`/`RTL8152` built-in đạt 1000 Mbps, NVMe qua hub 257 MB/s, PD 9V/3A.
 - [x] **Charge Limit & Battery Bypass (24/7)**: Driver **MPS MP2650** (`i2c5 @ 0x5c`, `REG08 BIT(4)` `CHG_EN`) + app GUI **Charge Limit** cài sẵn từ `boot.img` — đã kiểm chứng dòng pin về **`0.0 mA`** khi chạy trực tiếp từ nguồn USB-PD 9V.
 - [x] **Wi-Fi 6 / Bluetooth / Fast Boot**: `ath11k_pci` (`QCA6390`) + `hci_uart_qca` rebind nền, tổng thời gian boot **~5.6–5.9s**.
-- [x] **Droidloom + Incus + Security**: Built-in Kconfig cho Droidloom & Incus, `subuid`/`subgid` tự chuẩn hoá, SSH key-only (`PermitRootLogin prohibit-password`, `PasswordAuthentication no`), A/B deploy thống nhất qua `scripts/flash-boot-ab.sh` + `fastboot --set-active` (cấm `qbootctl -s`).
+- [x] **Droidloom + Incus + Security**: Built-in Kconfig cho Droidloom & Incus, `subuid`/`subgid` tự chuẩn hoá, SSH key-only (`PermitRootLogin prohibit-password`, `PasswordAuthentication no`), A/B deploy an toàn qua `scripts/flash-boot-ab.sh`.
+- [x] **Chuyển slot A/B từ xa qua SSH (`qbootctl` đã vá)**: Vá lỗi đảo TypeGUID trong `linux-msm/qbootctl` (`bootctrl_impl.c:551-558`) + bổ sung đủ 25 phân vùng A/B trên LUN 4 (`patches/qbootctl/0001-sm8250-fix-slot-guid-swap-and-ptn-list.patch`); đã kiểm chứng chuyển `_a` → `_b` hoàn toàn qua SSH (`qbootctl -s 1 && reboot`, không cần `fastboot`) và `slot-success.service` tự đánh dấu `SLOT _b: Active=1, Successful=1` trong khi giữ `SLOT _a: Successful=1` để rollback.
 
 ## Các hạng mục còn lại
 - [ ] **SLPI / Cảm biến vật lý**: SLPI đã boot sạch và `hexagonrpcd` đọc/ghi xong registry, nhưng `ssccli` chưa thấy accel/gyro — cần tiếp tục đối chiếu cấu hình sensor registry / QMI SSC.

@@ -96,4 +96,4 @@ fastboot --set-active=<a|b>
 fastboot reboot
 ```
 
-> **Cảnh báo A/B**: **Không chạy `qbootctl -s <slot>`** để chuyển slot vì bug đảo ngược TypeGUID trên LUN 4 của `linux-msm/qbootctl` có thể khiến ABL báo `Failed to load/authenticate boot image: Device Error`. Luôn chuyển slot bằng `fastboot --set-active=<a|b>`; `slot-success.service` sẽ tự đánh dấu slot thành công sau khi `denial.service` + `sshd.service` chạy ổn định 60 giây.
+> **Cảnh báo A/B**: **Không chạy `qbootctl -s <slot>` bản gốc upstream** vì bug đảo ngược TypeGUID trên LUN 4 của `linux-msm/qbootctl` (`bootctrl_impl.c:551-558`) khiến ABL báo `Failed to load/authenticate boot image: Device Error`. Nếu dùng bản `qbootctl` gốc, luôn chuyển slot bằng `fastboot --set-active=<a|b>`. Nếu đã cài bản `qbootctl` đã vá từ [patches/qbootctl/0001-sm8250-fix-slot-guid-swap-and-ptn-list.patch](patches/qbootctl/0001-sm8250-fix-slot-guid-swap-and-ptn-list.patch) (đã kiểm chứng chuyển `_a` → `_b` từ xa qua SSH), có thể chạy `qbootctl -s <0|1> && reboot`; `slot-success.service` sẽ tự đánh dấu slot thành công sau khi `denial.service` + `sshd.service` chạy ổn định 60 giây.

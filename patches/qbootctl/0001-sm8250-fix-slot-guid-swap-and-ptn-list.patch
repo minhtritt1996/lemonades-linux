@@ -1,0 +1,76 @@
+From: lemonades-linux <lemonades-linux@local>
+Subject: [PATCH] sm8250: fix A/B TypeGUID swap and add missing LUN 4 partitions
+
+Upstream linux-msm/qbootctl has two bugs on OnePlus 9R (SM8250 / lemonades):
+1. bootctrl_impl.c:551-558 always passes active_guid to pentryA and
+   inactive_guid to pentryB regardless of the target slot, leaving slot _b
+   with inactive_guid (77036cd4) when switching to slot 1 and causing ABL
+   "Failed to load/authenticate boot image: Device Error".
+2. gpt-utils.h PTN_SWAP_LIST omits 11 SM8250 LUN 4 A/B partitions
+   (bluetooth, dsp, featenabler, imagefv, logo, mdtp, mdtpsecapp,
+   multiimgoem, multiimgqti, uefisecapp, vm-linux) and sets
+   AB_SLOT_ACTIVE_VAL to 0x0F (1 try) instead of 0x3F (7 tries).
+
+Verified on OnePlus 9R (lemonades): remote A/B switch _a -> _b via
+`qbootctl -s 1 && reboot` without fastboot, with automatic
+`slot-success.service` marking SLOT _b Active=1/Successful=1 while
+preserving SLOT _a Successful=1 for ABL rollback.
+
+Upstream: https://github.com/linux-msm/qbootctl
+---
+diff --git a/bootctrl_impl.c b/bootctrl_impl.c
+index 5586f72..5a1811a 100644
+--- a/bootctrl_impl.c
++++ b/bootctrl_impl.c
+@@ -548,14 +548,15 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
+ 			return -1;
+ 		}
+ 
+-		// Mark A as active in primary table
+-		UPDATE_SLOT(pentryA, active_guid, a_state);
+-		// Mark A as active in backup table
+-		UPDATE_SLOT(pentryA_bak, active_guid, a_state);
+-		// Mark B as inactive in primary table
+-		UPDATE_SLOT(pentryB, inactive_guid, b_state);
+-		// Mark B as inactive in backup table
+-		UPDATE_SLOT(pentryB_bak, inactive_guid, b_state);
++		char *a_guid = slot == 0 ? active_guid : inactive_guid;
++		char *b_guid = slot == 1 ? active_guid : inactive_guid;
++
++		// Update A in primary and backup tables
++		UPDATE_SLOT(pentryA, a_guid, a_state);
++		UPDATE_SLOT(pentryA_bak, a_guid, a_state);
++		// Update B in primary and backup tables
++		UPDATE_SLOT(pentryB, b_guid, b_state);
++		UPDATE_SLOT(pentryB_bak, b_guid, b_state);
+ 	}
+ 
+ 	// write updated content to disk
+diff --git a/gpt-utils.h b/gpt-utils.h
+index b496d70..202ee39 100644
+--- a/gpt-utils.h
++++ b/gpt-utils.h
+@@ -67,7 +67,7 @@ extern "C" {
+ #define AB_PARTITION_ATTR_SLOT_ACTIVE	  (0x1 << 2)
+ #define AB_PARTITION_ATTR_BOOT_SUCCESSFUL (0x1 << 6)
+ #define AB_PARTITION_ATTR_UNBOOTABLE	  (0x1 << 7)
+-#define AB_SLOT_ACTIVE_VAL		  0xF
++#define AB_SLOT_ACTIVE_VAL		  0x3F
+ #define AB_SLOT_INACTIVE_VAL		  0x0
+ #define AB_SLOT_ACTIVE			  1
+ #define AB_SLOT_INACTIVE		  0
+@@ -78,9 +78,11 @@ extern "C" {
+ // *which* XBL partition is active is determined via the UFS bBootLunEn field
+ // as it needs to be handled by PBL
+ #define PTN_SWAP_LIST \
+-	"abl_a", "aop_a", "apdp_a", "cmnlib_a", "cmnlib64_a", "devcfg_a", "dtbo_a", \
+-	"hyp_a", "keymaster_a", "msadp_a", "qupfw_a", "storsec_a", "tz_a", \
+-	"vbmeta_a", "vbmeta_system_a"
++	"abl_a", "aop_a", "apdp_a", "bluetooth_a", "cmnlib_a", "cmnlib64_a", \
++	"devcfg_a", "dsp_a", "dtbo_a", "featenabler_a", "hyp_a", "imagefv_a", \
++	"keymaster_a", "logo_a", "mdtp_a", "mdtpsecapp_a", "msadp_a", \
++	"multiimgoem_a", "multiimgqti_a", "qupfw_a", "storsec_a", "tz_a", \
++	"uefisecapp_a", "vbmeta_a", "vbmeta_system_a", "vm-linux_a"
+ 
+ static const char g_all_ptns[][MAX_GPT_NAME_SIZE + 1] = {
+ 	PTN_SWAP_LIST, "boot_a", "system_a",
