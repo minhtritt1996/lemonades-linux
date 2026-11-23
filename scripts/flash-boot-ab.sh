@@ -31,6 +31,9 @@ done
 ssh_do() { ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "$HOST" "$@"; }
 
 [ -f "$IMG" ] || { echo "ERROR: missing $IMG" >&2; exit 1; }
+if [ ! -f "$DTBO_IMG" ] && [ -f "$(dirname "$IMG")/dtbo.img" ]; then
+	DTBO_IMG="$(dirname "$IMG")/dtbo.img"
+fi
 
 # Validate boot.img v2 header (magic, page_size=4096, header_version=2) & 96 MiB limit.
 size=$(stat -c %s "$IMG")
@@ -100,7 +103,7 @@ scp -o StrictHostKeyChecking=accept-new -q "$IMG" "$HOST:/tmp/boot.img"
 remote_sha=$(ssh_do sha256sum /tmp/boot.img | cut -d' ' -f1)
 [ "$remote_sha" = "$sha" ] || { echo "ERROR: copy sha mismatch ($remote_sha)" >&2; exit 1; }
 
-ssh_do "dd if=/tmp/boot.img of=/dev/disk/by-partlabel/boot$other bs=4M conv=fsync 2>&1 | tail -1; rm -f /tmp/boot.img; sync"
+ssh_do "trap 'rm -f /tmp/boot.img' EXIT; dd if=/tmp/boot.img of=/dev/disk/by-partlabel/boot$other bs=4M conv=fsync status=none && sync"
 back_sha=$(ssh_do "set -o pipefail; head -c $size /dev/disk/by-partlabel/boot$other | sha256sum" | cut -d' ' -f1)
 [ "$back_sha" = "$sha" ] || { echo "ERROR: readback sha mismatch ($back_sha)" >&2; exit 1; }
 

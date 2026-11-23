@@ -21,7 +21,8 @@ OUT="$BUILD/out"
 PATCHES="$ROOT/patches/linux"
 LINUX_UP="$UP/linux"
 
-LINUX_REV="988117cc1bb17338c586a4e21ade88b5397eac33"
+LINUX_REV=$(awk '/^[[:space:]]*revision:/ {print $2; exit}' "$PATCHES/UPSTREAM")
+[ -n "$LINUX_REV" ] || { echo "ERROR: cannot parse revision from $PATCHES/UPSTREAM" >&2; exit 1; }
 
 CROSS="${CROSS_COMPILE:-aarch64-linux-gnu-}"
 JOBS="${JOBS:-$(nproc)}"

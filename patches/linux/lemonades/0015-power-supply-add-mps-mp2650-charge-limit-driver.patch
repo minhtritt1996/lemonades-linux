@@ -30,10 +30,10 @@ index f3c0d1006..6098d5acd 100644
  obj-$(CONFIG_CHARGER_MAX77759)	+= max77759_charger.o
 diff --git a/drivers/power/supply/mps_mp2650_charger.c b/drivers/power/supply/mps_mp2650_charger.c
 new file mode 100644
-index 000000000..abe702a82
+index 000000000..4269b5f78
 --- /dev/null
 +++ b/drivers/power/supply/mps_mp2650_charger.c
-@@ -0,0 +1,405 @@
+@@ -0,0 +1,412 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Monolithic Power Systems MP2650 2S Buck-Boost Charge Limit & Bypass Driver
@@ -61,7 +61,6 @@ index 000000000..abe702a82
 +
 +#define MP2650_REG_CTRL0		0x08
 +#define MP2650_CHG_EN_BIT		BIT(4)
-+#define MP2650_WTD_RST_BIT		BIT(6)
 +
 +#define MP2650_REG_CTRL1		0x09
 +#define MP2650_WTD_TIMER_MASK		GENMASK(5, 4)
@@ -124,11 +123,14 @@ index 000000000..abe702a82
 +	return val.intval;
 +}
 +
-+static int mp2650_evaluate_locked(struct mp2650_charger *chg)
++static int mp2650_evaluate_locked(struct mp2650_charger *chg, bool *changed)
 +{
 +	int cap, reg08, verify, ret;
 +	bool want_enable = true;
 +	bool cur_hw_en;
++
++	if (changed)
++		*changed = false;
 +
 +	if (chg->behaviour == POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE) {
 +		want_enable = false;
@@ -170,7 +172,8 @@ index 000000000..abe702a82
 +				verify, want_enable);
 +			return -EIO;
 +		}
-+		power_supply_changed(chg->psy);
++		if (changed)
++			*changed = true;
 +	}
 +	return 0;
 +}
@@ -179,13 +182,17 @@ index 000000000..abe702a82
 +{
 +	struct mp2650_charger *chg =
 +		container_of(work, struct mp2650_charger, poll_work.work);
++	bool changed = false;
 +
 +	mutex_lock(&chg->lock);
 +	/* Keep watchdog disabled in case adapter replug reset MP2650 */
 +	mp2650_update_bits(chg->client, MP2650_REG_CTRL1,
 +			   MP2650_WTD_TIMER_MASK, 0);
-+	mp2650_evaluate_locked(chg);
++	mp2650_evaluate_locked(chg, &changed);
 +	mutex_unlock(&chg->lock);
++
++	if (changed)
++		power_supply_changed(chg->psy);
 +
 +	schedule_delayed_work(&chg->poll_work, msecs_to_jiffies(POLL_INTERVAL_MS));
 +}
@@ -269,7 +276,7 @@ index 000000000..abe702a82
 +			break;
 +		}
 +		chg->behaviour = val->intval;
-+		ret = mp2650_evaluate_locked(chg);
++		ret = mp2650_evaluate_locked(chg, NULL);
 +		break;
 +	case POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD:
 +		if (val->intval < 20 || val->intval > 95) {
@@ -279,7 +286,7 @@ index 000000000..abe702a82
 +		chg->start_threshold = val->intval;
 +		if (chg->start_threshold >= chg->end_threshold && chg->end_threshold < 100)
 +			chg->end_threshold = min(100, chg->start_threshold + 5);
-+		ret = mp2650_evaluate_locked(chg);
++		ret = mp2650_evaluate_locked(chg, NULL);
 +		break;
 +	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
 +		if (val->intval < 40 || val->intval > 100) {
@@ -289,7 +296,7 @@ index 000000000..abe702a82
 +		chg->end_threshold = val->intval;
 +		if (chg->start_threshold >= chg->end_threshold)
 +			chg->start_threshold = max(20, chg->end_threshold - 5);
-+		ret = mp2650_evaluate_locked(chg);
++		ret = mp2650_evaluate_locked(chg, NULL);
 +		break;
 +	default:
 +		ret = -EINVAL;

@@ -272,15 +272,22 @@ class Handler(BaseHTTPRequestHandler):
             ):
                 self._send(403, "application/json", json.dumps({"ok": False, "error": "Forbidden"}).encode("utf-8"))
                 return
-            n = int(self.headers.get("Content-Length", "0"))
             try:
+                n = int(self.headers.get("Content-Length", "0"))
+                if n <= 0 or n > 4096:
+                    self._send(400, "application/json", json.dumps({"ok": False, "error": "Invalid Content-Length"}).encode("utf-8"))
+                    return
                 body = json.loads(self.rfile.read(n).decode("utf-8"))
+                if not isinstance(body, dict):
+                    raise ValueError("Expected JSON object")
                 apply_settings(
                     body.get("start_threshold", 75),
                     body.get("end_threshold", 80),
                     body.get("behaviour", "auto"),
                 )
                 self._send(200, "application/json", json.dumps({"ok": True}).encode("utf-8"))
+            except (ValueError, UnicodeDecodeError) as e:
+                self._send(400, "application/json", json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
             except Exception as e:
                 self._send(500, "application/json", json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
         else:
@@ -298,6 +305,13 @@ def main():
                     if "=" in line:
                         k, v = line.strip().split("=", 1)
                         vals[k] = v
+            for _ in range(15):
+                if os.path.isdir(CHG_DIR):
+                    break
+                time.sleep(0.2)
+            if not os.path.isdir(CHG_DIR):
+                print(f"WARNING: {CHG_DIR} not present; skipping charge-limit restore", file=sys.stderr)
+                return
             apply_settings(vals.get("START", 75), vals.get("END", 80), vals.get("BEHAVIOUR", "auto"))
         return
 
