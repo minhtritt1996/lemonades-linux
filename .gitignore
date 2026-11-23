@@ -1,0 +1,29 @@
+# Read-only upstream clones, build trees and host-only leftovers
+/upstream/
+/build/
+/out/
+.agents/
+
+# Tool output
+__pycache__/
+*.pyc
+*.o
+*.log
+
+# Binary artifacts and images never go to git
+*.img
+*.cpio.gz
+*.bin
+*.dtb
+*.dtbo
+
+# Local dtschema install used by ./build.sh check
+/.venv-dtschema/
+
+# Vendor firmware is read from the phone at runtime, never committed
+prebuilt/fw-*/
+prebuilt/modules-*/
+
+# Prebuilt static helpers (rmtfs, pd-mapper, tqftpserv)
+/initramfs/bin/*
+!/initramfs/bin/README.md

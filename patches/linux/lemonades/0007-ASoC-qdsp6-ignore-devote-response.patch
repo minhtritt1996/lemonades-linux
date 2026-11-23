@@ -1,0 +1,17 @@
+diff --git a/sound/soc/qcom/qdsp6/q6afe.c b/sound/soc/qcom/qdsp6/q6afe.c
+index 9ac51c304..6580a7424 100644
+--- a/sound/soc/qcom/qdsp6/q6afe.c
++++ b/sound/soc/qcom/qdsp6/q6afe.c
+@@ -1038,6 +1038,12 @@ static int q6afe_callback(struct apr_device *adev, const struct apr_resp_pkt *da
+ 				wake_up(&afe->wait);
+ 			}
+ 			break;
++		case AFE_CMD_REMOTE_LPASS_CORE_HW_DEVOTE_REQUEST:
++			/*
++			 * The ADSP acknowledges the devote it issued itself;
++			 * there is no host-side waiter for this response.
++			 */
++			break;
+ 		default:
+ 			dev_err(afe->dev, "Unknown cmd 0x%x\n",	res->opcode);
+ 			break;

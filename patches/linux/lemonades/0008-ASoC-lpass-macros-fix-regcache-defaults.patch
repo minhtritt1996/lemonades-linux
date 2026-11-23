@@ -1,0 +1,122 @@
+diff --git a/sound/soc/codecs/lpass-rx-macro.c b/sound/soc/codecs/lpass-rx-macro.c
+index 282a6aaa9..3df11969f 100644
+--- a/sound/soc/codecs/lpass-rx-macro.c
++++ b/sound/soc/codecs/lpass-rx-macro.c
+@@ -9,6 +9,7 @@
+ #include <linux/pm_clock.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/clk.h>
++#include <linux/sort.h>
+ #include <sound/soc.h>
+ #include <sound/pcm.h>
+ #include <sound/pcm_params.h>
+@@ -1668,6 +1669,36 @@ static bool rx_is_readable_register(struct device *dev, unsigned int reg)
+ 	return rx_is_rw_register(dev, reg);
+ }
+ 
++static int lpass_macro_cmp_reg_default(const void *a, const void *b)
++{
++	const struct reg_default *ra = a, *rb = b;
++
++	return cmp_int(ra->reg, rb->reg);
++}
++
++/*
++ * The per-version tables are appended to the common table in probe(), which
++ * leaves the combined array unsorted; regmap bsearches it, so order it here.
++ */
++static void lpass_macro_sort_reg_defaults(struct reg_default *defaults,
++					  unsigned int count)
++{
++	sort(defaults, count, sizeof(*defaults), lpass_macro_cmp_reg_default,
++	     NULL);
++}
++
++/*
++ * A flat cache only marks registers that carry a default as valid.  Fill the
++ * remaining registers with zero explicitly so the cache is fully populated and
++ * regmap does not fall back to its "zero-initialized flat cache" warning.
++ */
++static int lpass_macro_reg_default_cb(struct device *dev, unsigned int reg,
++				      unsigned int *def)
++{
++	*def = 0;
++	return 0;
++}
++
+ static const struct regmap_config rx_regmap_config = {
+ 	.name = "rx_macro",
+ 	.reg_bits = 16,
+@@ -3858,8 +3889,11 @@ static int rx_macro_probe(struct platform_device *pdev)
+ 	if (!reg_config)
+ 		return -ENOMEM;
+ 
++	lpass_macro_sort_reg_defaults(reg_defaults, def_count);
++
+ 	reg_config->reg_defaults = reg_defaults;
+ 	reg_config->num_reg_defaults = def_count;
++	reg_config->reg_default_cb = lpass_macro_reg_default_cb;
+ 
+ 	rx->regmap = devm_regmap_init_mmio(dev, base, reg_config);
+ 	if (IS_ERR(rx->regmap))
+diff --git a/sound/soc/codecs/lpass-wsa-macro.c b/sound/soc/codecs/lpass-wsa-macro.c
+index f7dad096b..2d5027cf4 100644
+--- a/sound/soc/codecs/lpass-wsa-macro.c
++++ b/sound/soc/codecs/lpass-wsa-macro.c
+@@ -15,6 +15,7 @@
+ #include <linux/pm_clock.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/of_platform.h>
++#include <linux/sort.h>
+ #include <sound/tlv.h>
+ 
+ #include "lpass-macro-common.h"
+@@ -1104,6 +1105,36 @@ static bool wsa_is_volatile_register(struct device *dev, unsigned int reg)
+ 	return wsa_is_volatile_register_v2_1(dev, reg);
+ }
+ 
++static int lpass_macro_cmp_reg_default(const void *a, const void *b)
++{
++	const struct reg_default *ra = a, *rb = b;
++
++	return cmp_int(ra->reg, rb->reg);
++}
++
++/*
++ * The per-version tables are appended to the common table in probe(), which
++ * leaves the combined array unsorted; regmap bsearches it, so order it here.
++ */
++static void lpass_macro_sort_reg_defaults(struct reg_default *defaults,
++					  unsigned int count)
++{
++	sort(defaults, count, sizeof(*defaults), lpass_macro_cmp_reg_default,
++	     NULL);
++}
++
++/*
++ * A flat cache only marks registers that carry a default as valid.  Fill the
++ * remaining registers with zero explicitly so the cache is fully populated and
++ * regmap does not fall back to its "zero-initialized flat cache" warning.
++ */
++static int lpass_macro_reg_default_cb(struct device *dev, unsigned int reg,
++				      unsigned int *def)
++{
++	*def = 0;
++	return 0;
++}
++
+ static const struct regmap_config wsa_regmap_config = {
+ 	.name = "wsa_macro",
+ 	.reg_bits = 16,
+@@ -2772,8 +2803,11 @@ static int wsa_macro_probe(struct platform_device *pdev)
+ 	if (!reg_config)
+ 		return -ENOMEM;
+ 
++	lpass_macro_sort_reg_defaults(reg_defaults, def_count);
++
+ 	reg_config->reg_defaults = reg_defaults;
+ 	reg_config->num_reg_defaults = def_count;
++	reg_config->reg_default_cb = lpass_macro_reg_default_cb;
+ 
+ 	wsa->regmap = devm_regmap_init_mmio(dev, base, reg_config);
+ 	if (IS_ERR(wsa->regmap))

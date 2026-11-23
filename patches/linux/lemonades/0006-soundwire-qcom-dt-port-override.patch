@@ -1,0 +1,48 @@
+diff --git a/drivers/soundwire/qcom.c b/drivers/soundwire/qcom.c
+index 55678a30c..32cb8c8cb 100644
+--- a/drivers/soundwire/qcom.c
++++ b/drivers/soundwire/qcom.c
+@@ -1443,9 +1443,11 @@ static int qcom_swrm_get_port_config(struct qcom_swrm_ctrl *ctrl)
+ 
+ 	ret = of_property_read_u32(np, "qcom,din-ports", &val);
+ 	if (!ret) { /* only if present */
++		/* The DT port count is an intentional board override of the
++		 * controller readback, so a mismatch is expected. */
+ 		if (val != ctrl->num_din_ports) {
+-			dev_err(ctrl->dev, "din-ports (%d) mismatch with controller (%d)",
+-				val, ctrl->num_din_ports);
++			dev_info(ctrl->dev, "din-ports (%d) overrides controller (%d)",
++				 val, ctrl->num_din_ports);
+ 		}
+ 
+ 		ctrl->num_din_ports = val;
+@@ -1454,8 +1456,8 @@ static int qcom_swrm_get_port_config(struct qcom_swrm_ctrl *ctrl)
+ 	ret = of_property_read_u32(np, "qcom,dout-ports", &val);
+ 	if (!ret) { /* only if present */
+ 		if (val != ctrl->num_dout_ports) {
+-			dev_err(ctrl->dev, "dout-ports (%d) mismatch with controller (%d)",
+-				val, ctrl->num_dout_ports);
++			dev_info(ctrl->dev, "dout-ports (%d) overrides controller (%d)",
++				 val, ctrl->num_dout_ports);
+ 		}
+ 
+ 		ctrl->num_dout_ports = val;
+@@ -1722,6 +1724,7 @@ static void qcom_swrm_remove(struct platform_device *pdev)
+ static int __maybe_unused swrm_runtime_resume(struct device *dev)
+ {
+ 	struct qcom_swrm_ctrl *ctrl = dev_get_drvdata(dev);
++	u32 val = 0;
+ 	int ret;
+ 
+ 	if (ctrl->wake_irq > 0) {
+@@ -1730,8 +1733,9 @@ static int __maybe_unused swrm_runtime_resume(struct device *dev)
+ 	}
+ 
+ 	clk_prepare_enable(ctrl->hclk);
++	ctrl->reg_read(ctrl, SWRM_COMP_CFG_ADDR, &val);
+ 
+-	if (ctrl->clock_stop_not_supported) {
++	if (ctrl->clock_stop_not_supported || !(val & SWRM_COMP_CFG_ENABLE_MSK)) {
+ 		reinit_completion(&ctrl->enumeration);
+ 		ctrl->reg_write(ctrl, SWRM_COMP_SW_RESET, 0x01);
+ 		usleep_range(100, 105);

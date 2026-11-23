@@ -1,0 +1,6 @@
+# Upstream base repository and revision for lemonades-linux patches
+
+linux:
+  repository: https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
+  revision:   988117cc1bb17338c586a4e21ade88b5397eac33   # v7.3.5
+  tag:        v7.3.5

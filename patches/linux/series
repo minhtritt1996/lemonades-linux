@@ -1,0 +1,12 @@
+lemonades/0001-arm64-dts-qcom-add-oneplus-lemonades.patch
+lemonades/0002-drm-panel-add-samsung-amb655x.patch
+lemonades/0003-input-touchscreen-add-synaptics-s3908.patch
+lemonades/0004-drm-msm-dsi-skip-link-clk-when-active.patch
+lemonades/0005-drm-msm-optional-gpu-regulators.patch
+lemonades/0006-soundwire-qcom-dt-port-override.patch
+lemonades/0007-ASoC-qdsp6-ignore-devote-response.patch
+lemonades/0008-ASoC-lpass-macros-fix-regcache-defaults.patch
+lemonades/0009-usb-typec-qcom-demote-tx-sig-log.patch
+lemonades/0010-ASoC-codecs-add-tfa987x-amplifier-driver.patch
+lemonades/0011-arm64-dts-qcom-sm8250-add-q6usbdai-and-fastrpc-cma.patch
+lemonades/0012-misc-fastrpc-revert-client-id-regressions.patch

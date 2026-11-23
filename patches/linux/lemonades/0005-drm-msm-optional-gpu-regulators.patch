@@ -1,0 +1,26 @@
+diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+index 0c2c35636..8c7a867e3 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -955,13 +955,18 @@ int msm_gpu_init(struct drm_device *drm, struct platform_device *pdev,
+ 	if (IS_ERR(gpu->ebi1_clk))
+ 		gpu->ebi1_clk = NULL;
+ 
+-	/* Acquire regulators: */
+-	gpu->gpu_reg = devm_regulator_get(&pdev->dev, "vdd");
++	/*
++	 * GPU rails are managed through the RPMh power domains on SM8250 and
++	 * there is no board-specific vdd/vddcx supply; asking for an optional
++	 * regulator keeps the dummy-regulator warning out of dmesg while
++	 * retaining support for boards that do describe them.
++	 */
++	gpu->gpu_reg = devm_regulator_get_optional(&pdev->dev, "vdd");
+ 	DBG("gpu_reg: %p", gpu->gpu_reg);
+ 	if (IS_ERR(gpu->gpu_reg))
+ 		gpu->gpu_reg = NULL;
+ 
+-	gpu->gpu_cx = devm_regulator_get(&pdev->dev, "vddcx");
++	gpu->gpu_cx = devm_regulator_get_optional(&pdev->dev, "vddcx");
+ 	DBG("gpu_cx: %p", gpu->gpu_cx);
+ 	if (IS_ERR(gpu->gpu_cx))
+ 		gpu->gpu_cx = NULL;

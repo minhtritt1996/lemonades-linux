@@ -1,0 +1,14 @@
+diff --git a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_pdphy.c b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_pdphy.c
+index 926fa017e..fbf0a9121 100644
+--- a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_pdphy.c
++++ b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_pdphy.c
+@@ -379,7 +379,8 @@ static irqreturn_t qcom_pmic_typec_pdphy_isr(int irq, void *dev_id)
+ 
+ 	switch (irq_data->virq) {
+ 	case PMIC_PDPHY_SIG_TX_IRQ:
+-		dev_err(dev, "isr: tx_sig\n");
++		/* Notification that a PD message left the PHY; no action. */
++		dev_dbg(dev, "isr: tx_sig\n");
+ 		break;
+ 	case PMIC_PDPHY_SIG_RX_IRQ:
+ 		schedule_work(&pmic_typec_pdphy->reset_work);
