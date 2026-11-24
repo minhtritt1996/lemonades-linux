@@ -61,6 +61,26 @@ def parse_behaviour(raw):
     return raw or "auto"
 
 
+def load_conf():
+    vals = {
+        "START": 75,
+        "END": 80,
+        "BEHAVIOUR": "auto",
+        "LOW_BAT_SHUTDOWN": 1,
+        "LOW_BAT_THRESHOLD": 20,
+    }
+    if os.path.isfile(CONF_PATH):
+        try:
+            with open(CONF_PATH) as f:
+                for line in f:
+                    if "=" in line:
+                        k, v = line.strip().split("=", 1)
+                        vals[k] = v
+        except OSError:
+            pass
+    return vals
+
+
 def get_state():
     pd_dir = find_pd_dir()
     pd_v = read_int(os.path.join(pd_dir, "voltage_now")) / 1e6 if pd_dir else 0.0
@@ -73,6 +93,15 @@ def get_state():
     end_thr = read_int(os.path.join(CHG_DIR, "charge_control_end_threshold"), 80)
     hw_on = read_int(os.path.join(CHG_DIR, "hw_charge_enabled"), 1)
     chg_status = read_str(os.path.join(CHG_DIR, "status"), "Unknown")
+    conf = load_conf()
+    try:
+        low_bat_on = bool(int(conf.get("LOW_BAT_SHUTDOWN", 1)))
+    except (ValueError, TypeError):
+        low_bat_on = True
+    try:
+        low_bat_thr = max(5, min(50, int(conf.get("LOW_BAT_THRESHOLD", 20))))
+    except (ValueError, TypeError):
+        low_bat_thr = 20
 
     return {
         "driver_ok": chg_present,
@@ -88,10 +117,12 @@ def get_state():
         "end_threshold": end_thr,
         "hw_charging_enabled": bool(hw_on),
         "chg_status": chg_status,
+        "low_bat_shutdown": low_bat_on,
+        "low_bat_threshold": low_bat_thr,
     }
 
 
-def apply_settings(start_thr, end_thr, behaviour):
+def apply_settings(start_thr, end_thr, behaviour, low_bat_shutdown=None, low_bat_threshold=None):
     start_thr = max(20, min(95, int(start_thr)))
     end_thr = max(40, min(100, int(end_thr)))
     if start_thr >= end_thr and end_thr < 100:
@@ -99,13 +130,28 @@ def apply_settings(start_thr, end_thr, behaviour):
     if behaviour not in ("auto", "inhibit-charge"):
         behaviour = "auto"
 
+    conf = load_conf()
+    if low_bat_shutdown is None:
+        low_bat_shutdown = bool(int(conf.get("LOW_BAT_SHUTDOWN", 1)))
+    else:
+        low_bat_shutdown = bool(low_bat_shutdown)
+    if low_bat_threshold is None:
+        low_bat_threshold = int(conf.get("LOW_BAT_THRESHOLD", 20))
+    low_bat_threshold = max(5, min(50, int(low_bat_threshold)))
+
     write_str(os.path.join(CHG_DIR, "charge_control_end_threshold"), end_thr)
     write_str(os.path.join(CHG_DIR, "charge_control_start_threshold"), start_thr)
     write_str(os.path.join(CHG_DIR, "charge_behaviour"), behaviour)
 
     os.makedirs(os.path.dirname(CONF_PATH), exist_ok=True)
     with open(CONF_PATH, "w") as f:
-        f.write(f"START={start_thr}\nEND={end_thr}\nBEHAVIOUR={behaviour}\n")
+        f.write(
+            f"START={start_thr}\n"
+            f"END={end_thr}\n"
+            f"BEHAVIOUR={behaviour}\n"
+            f"LOW_BAT_SHUTDOWN={1 if low_bat_shutdown else 0}\n"
+            f"LOW_BAT_THRESHOLD={low_bat_threshold}\n"
+        )
 
 
 HTML = """<!doctype html>
@@ -171,6 +217,15 @@ HTML = """<!doctype html>
       </div>
       <input id="inhibit" type="checkbox">
     </div>
+    <div class="toggle" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+      <div>
+        <div style="font-weight:600;font-size:14px">Tự tắt máy khi rút sạc & pin yếu</div>
+        <div class="stat-label">Bảo vệ pin khi mất điện / không cắm sạc</div>
+      </div>
+      <input id="lowBatShutdown" type="checkbox" checked onchange="syncSliders()">
+    </div>
+    <div class="row"><span>Ngưỡng tự tắt máy</span><strong id="lowBatVal">20%</strong></div>
+    <input id="lowBatSlider" type="range" min="5" max="50" step="5" value="20" oninput="syncSliders()">
     <button class="primary" onclick="save()">Áp dụng & Lưu</button>
     <div id="msg" class="msg"></div>
   </div>
@@ -182,6 +237,8 @@ function syncSliders() {
   if (s >= e && e < 100) { s = Math.max(20, e - 5); startSlider.value = s; }
   endVal.textContent = e + (e === 100 ? '% (Tắt)' : '%');
   startVal.textContent = s + '%';
+  lowBatSlider.disabled = !lowBatShutdown.checked;
+  lowBatVal.textContent = lowBatShutdown.checked ? (lowBatSlider.value + '%') : 'Tắt';
 }
 async function refresh() {
   try {
@@ -197,6 +254,8 @@ async function refresh() {
       endSlider.value = d.end_threshold;
       startSlider.value = d.start_threshold;
       inhibit.checked = (d.behaviour === 'inhibit-charge');
+      lowBatShutdown.checked = !!d.low_bat_shutdown;
+      lowBatSlider.value = d.low_bat_threshold || 20;
       syncSliders();
       initialized = true;
     }
@@ -209,7 +268,9 @@ async function save() {
     const body = {
       start_threshold: parseInt(startSlider.value),
       end_threshold: parseInt(endSlider.value),
-      behaviour: inhibit.checked ? 'inhibit-charge' : 'auto'
+      behaviour: inhibit.checked ? 'inhibit-charge' : 'auto',
+      low_bat_shutdown: lowBatShutdown.checked,
+      low_bat_threshold: parseInt(lowBatSlider.value)
     };
     const r = await fetch('/api/apply', {
       method: 'POST',
@@ -285,6 +346,8 @@ class Handler(BaseHTTPRequestHandler):
                     body.get("start_threshold", 75),
                     body.get("end_threshold", 80),
                     body.get("behaviour", "auto"),
+                    body.get("low_bat_shutdown"),
+                    body.get("low_bat_threshold"),
                 )
                 self._send(200, "application/json", json.dumps({"ok": True}).encode("utf-8"))
             except (ValueError, TypeError, UnicodeDecodeError) as e:
@@ -295,8 +358,19 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, "text/plain", b"Not found")
 
 
-def run_battery_guard(threshold=20):
-    """Shut down cleanly if running on battery (no external power) and capacity < threshold."""
+def run_battery_guard(default_threshold=20):
+    """Shut down cleanly if enabled in CONF_PATH, unplugged, and capacity < threshold."""
+    conf = load_conf()
+    try:
+        if not int(conf.get("LOW_BAT_SHUTDOWN", 1)):
+            return
+    except (ValueError, TypeError):
+        return
+    try:
+        threshold = max(5, min(50, int(conf.get("LOW_BAT_THRESHOLD", default_threshold))))
+    except (ValueError, TypeError):
+        threshold = default_threshold
+
     pd_dir = find_pd_dir()
     pd_on = read_int(os.path.join(pd_dir, "online"), 0) if pd_dir else 0
     chg_on = read_int(os.path.join(CHG_DIR, "online"), 0)
