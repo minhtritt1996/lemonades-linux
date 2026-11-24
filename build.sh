@@ -184,6 +184,8 @@ export_patches() {
 		include/linux/mhi.h
 	export_patch "lemonades/0017-bus-mhi-pci_generic-add-sdx55m-modem-profile.patch" \
 		drivers/bus/mhi/host/pci_generic.c
+	export_patch "lemonades/0018-pci-dwc-map-sm8250-pcie2-msi-in-iommu.patch" \
+		drivers/pci/controller/dwc/pcie-designware-host.c
 }
 
 check_tree() {

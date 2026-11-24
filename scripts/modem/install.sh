@@ -23,7 +23,7 @@ for arg in "$@"; do
 done
 
 SRC="$ROOT/scripts/modem"
-for f in sahara_fw_loader.py lemonades-sdx55-modem.sh; do
+for f in sahara_fw_loader.py lemonades-sdx55-modem.sh verify-modem.sh; do
 	[ -f "$SRC/$f" ] || { echo "ERROR: missing $SRC/$f" >&2; exit 1; }
 done
 
@@ -33,8 +33,9 @@ scp_to() { scp -q -o StrictHostKeyChecking=accept-new "$1" "$HOST:$2"; }
 echo "==> installing modem userspace on $HOST"
 scp_to "$SRC/sahara_fw_loader.py" /usr/local/sbin/lemonades-sdx55-sahara
 scp_to "$SRC/lemonades-sdx55-modem.sh" /usr/local/sbin/lemonades-sdx55-modem.sh
+scp_to "$SRC/verify-modem.sh" /usr/local/sbin/lemonades-sdx55-verify
 scp_to "$SRC/lemonades-sdx55-modem.service" /etc/systemd/system/lemonades-sdx55-modem.service
-ssh_do 'chmod 755 /usr/local/sbin/lemonades-sdx55-sahara /usr/local/sbin/lemonades-sdx55-modem.sh
+ssh_do 'chmod 755 /usr/local/sbin/lemonades-sdx55-sahara /usr/local/sbin/lemonades-sdx55-modem.sh /usr/local/sbin/lemonades-sdx55-verify
 	systemctl daemon-reload
 	mkdir -p /var/lib/lemonades-sdx55/efs'
 

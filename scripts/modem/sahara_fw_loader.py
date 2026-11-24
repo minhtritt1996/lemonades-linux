@@ -16,6 +16,7 @@ Usage:
 import argparse
 import os
 import select
+import stat
 import struct
 import sys
 import time
@@ -37,14 +38,17 @@ CMD_EXEC_RESP = 14
 CMD_EXEC_DATA = 15
 CMD_MEMORY_DEBUG64 = 16
 CMD_MEMORY_READ64 = 17
+CMD_READ_DATA_64 = 18
 
 SAHARA_COMMAND_SUPPORTED_COMMANDS = 8
 
 HELLO_LEN = 48
 
 IMAGE_FILES = {
+    4: "apps.mbn",
     6: "apps.mbn",
     8: "qdsp6sw.mbn",
+    12: "qdsp6sw.mbn",
     16: "efs1.bin",
     17: "efs2.bin",
     20: "efs3.bin",
@@ -57,6 +61,7 @@ IMAGE_FILES = {
     36: "multi_image_qti.mbn",
     37: "multi_image.mbn",
     38: "xbl_cfg.elf",
+    39: "apps.mbn",
     40: "apdp.mbn",
     41: "devcfg.mbn",
     42: "sec.elf",
@@ -189,6 +194,17 @@ def run_next_cmd_or_switch(fd, args):
         send_switch_mode(fd, 0, args)
 
 
+def file_size(path):
+    st = os.stat(path)
+    if stat.S_ISBLK(st.st_mode):
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            return os.lseek(fd, 0, os.SEEK_END)
+        finally:
+            os.close(fd)
+    return st.st_size
+
+
 def firmware_path(args, image):
     # Real per-device NV (mdm1m9kefs*) and DDR training data (mdmddr) are not
     # in image/sdx55m as usable files: efs{1,2,3}.bin there are 512-byte
@@ -255,6 +271,11 @@ def start_next_memory_read(fd, args):
     while args.memory_entries:
         entry = args.memory_entries[-1]
         if entry["remaining"] <= 0:
+            tmp_path = entry.get("tmp_path")
+            if tmp_path and os.path.exists(tmp_path):
+                with open(tmp_path, "rb") as fp:
+                    os.fsync(fp.fileno())
+                os.replace(tmp_path, entry["path"])
             log("mem", f"complete index={entry['index']} name={entry['name']} path={entry['path']}")
             args.memory_entries.pop()
             continue
@@ -289,7 +310,8 @@ def handle_memory_table_data(fd, data, args):
     args.memory_entries = entries[:]
     for entry in entries:
         entry["path"] = memory_path(args, entry)
-        open(entry["path"], "wb").close()
+        entry["tmp_path"] = entry["path"] + ".tmp"
+        open(entry["tmp_path"], "wb").close()
         log("mem_table",
             f"entry={entry['index']} save_pref={entry['save_pref']} "
             f"base=0x{entry['base']:x} length={entry['length']} "
@@ -305,7 +327,7 @@ def handle_memory_region_data(fd, data, args):
         raise RuntimeError("memory region data arrived without active entry")
 
     take = min(args.memory_region_remaining, len(data))
-    with open(entry["path"], "ab", buffering=0) as fp:
+    with open(entry["tmp_path"], "ab", buffering=0) as fp:
         fp.write(data[:take])
 
     args.memory_region_remaining -= take
@@ -329,7 +351,7 @@ def handle_memory_region_data(fd, data, args):
 
 def send_image_range(fd, image, offset, length, args):
     path = firmware_path(args, image)
-    size = os.path.getsize(path)
+    size = file_size(path)
     if args.max_request > 0 and length > args.max_request:
         raise RuntimeError(
             f"request too large image={image} length={length} "
@@ -404,6 +426,12 @@ def handle_packet(fd, data, args):
         if len(packet_words) < 5:
             raise RuntimeError("short READ_DATA")
         image, offset, length = packet_words[2], packet_words[3], packet_words[4]
+        return "progress", send_image_range(fd, image, offset, length, args)
+
+    if cmd == CMD_READ_DATA_64:
+        if len(data) < 32:
+            raise RuntimeError("short READ_DATA_64")
+        image, offset, length = struct.unpack_from("<QQQ", data, 8)
         return "progress", send_image_range(fd, image, offset, length, args)
 
     if cmd == CMD_END_IMAGE:
@@ -602,7 +630,7 @@ def main():
     for image, name in sorted(IMAGE_FILES.items()):
         path = firmware_path(args, image)
         log("map", f"image={image} file={os.path.basename(path)} "
-                   f"size={os.path.getsize(path)} source={path}")
+                   f"size={file_size(path)} source={path}")
 
     if args.persist:
         # Run forever: keep a responder on the pipe across device

@@ -15,3 +15,4 @@ lemonades/0014-drm-display-hdmi-audio-configure-from-hw_params.patch
 lemonades/0015-power-supply-add-mps-mp2650-charge-limit-driver.patch
 lemonades/0016-bus-mhi-add-sdx55-sahara-and-efs-pipes.patch
 lemonades/0017-bus-mhi-pci_generic-add-sdx55m-modem-profile.patch
+lemonades/0018-pci-dwc-map-sm8250-pcie2-msi-in-iommu.patch

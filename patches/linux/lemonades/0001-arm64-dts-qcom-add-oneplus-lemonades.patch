@@ -1499,10 +1499,10 @@ index 000000000..d1ed5e164
 +};
 diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-lemonades.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-lemonades.dts
 new file mode 100644
-index 000000000..520794b63
+index 000000000..69d8ed7c7
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-lemonades.dts
-@@ -0,0 +1,268 @@
+@@ -0,0 +1,304 @@
 +// SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 +/*
 + * Copyright (c) 2026, The Linux Foundation.
@@ -1670,6 +1670,19 @@ index 000000000..520794b63
 +	};
 +};
 +
++&intc {
++	mbi-alias = <0x0 0x17a10000>;
++	mbi-ranges = <864 32>;
++	msi-controller;
++};
++
++&pcie2 {
++	msi-parent = <&intc>;
++	pinctrl-0 = <&pcie2_default_state &mdm2ap_active
++		     &mdm_ap2mdm_status_active &mdm_ap2mdm_errfatal_active>;
++	pinctrl-names = "default";
++};
++
 +&panel_vout_default {
 +	pins = "gpio24";
 +};
@@ -1694,6 +1707,29 @@ index 000000000..520794b63
 +};
 +
 +&tlmm {
++	mdm2ap_active: mdm2ap-active-state {
++		pins = "gpio1", "gpio3";
++		function = "gpio";
++		drive-strength = <8>;
++		bias-disable;
++	};
++
++	mdm_ap2mdm_status_active: mdm-ap2mdm-status-active-state {
++		pins = "gpio56";
++		function = "gpio";
++		drive-strength = <16>;
++		output-high;
++		bias-disable;
++	};
++
++	mdm_ap2mdm_errfatal_active: mdm-ap2mdm-errfatal-active-state {
++		pins = "gpio57";
++		function = "gpio";
++		drive-strength = <16>;
++		output-low;
++		bias-disable;
++	};
++
 +	pm8008_default: pm8008-default-state {
 +		pins = "gpio93";
 +		function = "gpio";
