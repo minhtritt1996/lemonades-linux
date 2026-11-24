@@ -295,8 +295,43 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, "text/plain", b"Not found")
 
 
+def run_battery_guard(threshold=20):
+    """Shut down cleanly if running on battery (no external power) and capacity < threshold."""
+    pd_dir = find_pd_dir()
+    pd_on = read_int(os.path.join(pd_dir, "online"), 0) if pd_dir else 0
+    chg_on = read_int(os.path.join(CHG_DIR, "online"), 0)
+    if pd_on or chg_on:
+        return
+
+    cap = read_int(os.path.join(BAT_DIR, "capacity"), -1)
+    bat_status = read_str(os.path.join(BAT_DIR, "status"), "")
+    if cap < 0 or cap >= threshold or bat_status != "Discharging":
+        return
+
+    # Confirm after 15 s so brief cable replugs or PDO renegotiations never trigger shutdown.
+    time.sleep(15)
+    pd_dir = find_pd_dir()
+    pd_on = read_int(os.path.join(pd_dir, "online"), 0) if pd_dir else 0
+    chg_on = read_int(os.path.join(CHG_DIR, "online"), 0)
+    cap2 = read_int(os.path.join(BAT_DIR, "capacity"), -1)
+    bat_status2 = read_str(os.path.join(BAT_DIR, "status"), "")
+    if pd_on or chg_on or cap2 < 0 or cap2 >= threshold or bat_status2 != "Discharging":
+        return
+
+    print(
+        f"lemonades-battery-guard: unplugged and battery at {cap2}% (< {threshold}%); shutting down",
+        file=sys.stderr,
+        flush=True,
+    )
+    subprocess.run(["systemctl", "poweroff"], check=False)
+
+
 def main():
     global LISTEN_PORT
+    if len(sys.argv) > 1 and sys.argv[1] == "--battery-guard":
+        thr = int(sys.argv[2]) if len(sys.argv) > 2 else 20
+        run_battery_guard(thr)
+        return
     if len(sys.argv) > 1 and sys.argv[1] == "--apply-saved":
         vals = {}
         if os.path.isfile(CONF_PATH):
@@ -345,6 +380,12 @@ def main():
     if browser and "chromium" in os.path.basename(browser):
         profile_dir = os.path.join(os.path.expanduser("~"), ".cache", "lemonades-charge-gui-profile")
         os.makedirs(profile_dir, exist_ok=True)
+        if not already_running:
+            for lock_name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+                try:
+                    os.unlink(os.path.join(profile_dir, lock_name))
+                except OSError:
+                    pass
         p = subprocess.Popen([
             browser,
             f"--user-data-dir={profile_dir}",

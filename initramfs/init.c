@@ -535,17 +535,19 @@ static void ensure_audio_config(void)
 		"Syntax 3\n\n"
 		"SectionUseCase.\"HiFi\" {\n"
 		"\tFile \"/Qualcomm/sm8250/OnePlus9R-HiFi.conf\"\n"
-		"\tComment \"HiFi Quality Music\"\n"
+		"\tComment \"HiFi Stereo Speakers\"\n"
+		"}\n\n"
+		"SectionUseCase.\"HDMI\" {\n"
+		"\tFile \"/Qualcomm/sm8250/OnePlus9R-HDMI.conf\"\n"
+		"\tComment \"DisplayPort / HDMI Output\"\n"
 		"}\n";
 	static const char ucm_hifi[] =
 		"SectionVerb {\n"
 		"\tEnableSequence [\n"
 		"\t\tcset \"name='TERT_MI2S_RX Audio Mixer MultiMedia1' 1\"\n"
-		"\t\tcset \"name='DISPLAY_PORT_RX Audio Mixer MultiMedia2' 1\"\n"
 		"\t]\n\n"
 		"\tDisableSequence [\n"
 		"\t\tcset \"name='TERT_MI2S_RX Audio Mixer MultiMedia1' 0\"\n"
-		"\t\tcset \"name='DISPLAY_PORT_RX Audio Mixer MultiMedia2' 0\"\n"
 		"\t]\n\n"
 		"\tValue {\n"
 		"\t\tTQ \"HiFi\"\n"
@@ -558,6 +560,18 @@ static void ensure_audio_config(void)
 		"\t\tPlaybackPCM \"hw:${CardId},0\"\n"
 		"\t\tPlaybackRate 48000\n"
 		"\t\tPlaybackChannels 2\n"
+		"\t}\n"
+		"}\n";
+	static const char ucm_hdmi[] =
+		"SectionVerb {\n"
+		"\tEnableSequence [\n"
+		"\t\tcset \"name='DISPLAY_PORT_RX Audio Mixer MultiMedia2' 1\"\n"
+		"\t]\n\n"
+		"\tDisableSequence [\n"
+		"\t\tcset \"name='DISPLAY_PORT_RX Audio Mixer MultiMedia2' 0\"\n"
+		"\t]\n\n"
+		"\tValue {\n"
+		"\t\tTQ \"HiFi\"\n"
 		"\t}\n"
 		"}\n\n"
 		"SectionDevice.\"HDMI\" {\n"
@@ -597,7 +611,8 @@ static void ensure_audio_config(void)
 			   ucm_card, sizeof(ucm_card) - 1);
 	write_newroot_file("/newroot/usr/share/alsa/ucm2/Qualcomm/sm8250/OnePlus9R-HiFi.conf",
 			   ucm_hifi, sizeof(ucm_hifi) - 1);
-	unlink("/newroot/usr/share/alsa/ucm2/Qualcomm/sm8250/OnePlus9R-HDMI.conf");
+	write_newroot_file("/newroot/usr/share/alsa/ucm2/Qualcomm/sm8250/OnePlus9R-HDMI.conf",
+			   ucm_hdmi, sizeof(ucm_hdmi) - 1);
 	unlink("/newroot/usr/share/alsa/ucm2/conf.d/sm8250/SM8250-OnePlus-9R.conf");
 	if (symlink("../../Qualcomm/sm8250/SM8250-OnePlus-9R.conf",
 		    "/newroot/usr/share/alsa/ucm2/conf.d/sm8250/SM8250-OnePlus-9R.conf") != 0) {}
@@ -644,6 +659,21 @@ static void ensure_charge_limit_app(void)
 		"ExecStart=/usr/local/bin/lemonades-charge-gui --apply-saved\n\n"
 		"[Install]\n"
 		"WantedBy=multi-user.target\n";
+	static const char guard_svc[] =
+		"[Unit]\n"
+		"Description=OnePlus 9R Low-Battery Auto Shutdown Guard (<20% unplugged)\n\n"
+		"[Service]\n"
+		"Type=oneshot\n"
+		"ExecStart=/usr/local/bin/lemonades-charge-gui --battery-guard 20\n";
+	static const char guard_tmr[] =
+		"[Unit]\n"
+		"Description=Check battery level every 30s for low-battery protection\n\n"
+		"[Timer]\n"
+		"OnBootSec=60s\n"
+		"OnUnitActiveSec=30s\n"
+		"AccuracySec=5s\n\n"
+		"[Install]\n"
+		"WantedBy=timers.target\n";
 	char buf[16384];
 	int sfd, dfd;
 	ssize_t n;
@@ -686,13 +716,22 @@ static void ensure_charge_limit_app(void)
 	if (chmod("/newroot/etc/lemonades/charge-limit/charge-limit.conf", 0660) != 0) {}
 
 	mkdir_p("/newroot/etc/systemd/system/multi-user.target.wants");
+	mkdir_p("/newroot/etc/systemd/system/timers.target.wants");
 	write_newroot_file("/newroot/etc/systemd/system/lemonades-charge-limit.service",
 			   svc, sizeof(svc) - 1);
 	unlink("/newroot/etc/systemd/system/multi-user.target.wants/lemonades-charge-limit.service");
 	if (symlink("/etc/systemd/system/lemonades-charge-limit.service",
 		    "/newroot/etc/systemd/system/multi-user.target.wants/lemonades-charge-limit.service") != 0) {}
 
-	log_kmsg("lemonades-init: Charge Limit GUI + udev + restore service ensured\n");
+	write_newroot_file("/newroot/etc/systemd/system/lemonades-battery-guard.service",
+			   guard_svc, sizeof(guard_svc) - 1);
+	write_newroot_file("/newroot/etc/systemd/system/lemonades-battery-guard.timer",
+			   guard_tmr, sizeof(guard_tmr) - 1);
+	unlink("/newroot/etc/systemd/system/timers.target.wants/lemonades-battery-guard.timer");
+	if (symlink("/etc/systemd/system/lemonades-battery-guard.timer",
+		    "/newroot/etc/systemd/system/timers.target.wants/lemonades-battery-guard.timer") != 0) {}
+
+	log_kmsg("lemonades-init: Charge Limit GUI + udev + restore + battery guard ensured\n");
 }
 
 /*
