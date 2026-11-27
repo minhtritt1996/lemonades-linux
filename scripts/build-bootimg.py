@@ -11,6 +11,7 @@ import sys
 
 DEFAULT_CMDLINE = (
     "ufshcd_core.use_mcq_mode=N "
+    "cpuidle.off=1 "
     "console=tty0 "
     "fbcon=font:TER16x32 "
     "clk_ignore_unused "

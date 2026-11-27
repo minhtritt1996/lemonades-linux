@@ -796,6 +796,21 @@ static void ensure_subid_ranges(void)
 	log_kmsg("lemonades-init: root subordinate UID/GID range ensured\n");
 }
 
+static void ensure_watchdog_and_recovery(void)
+{
+	static const char wdt_conf[] =
+		"# Written by lemonades initramfs: auto-recover if a CPU or systemd freezes.\n"
+		"[Manager]\n"
+		"RuntimeWatchdogSec=30s\n"
+		"RebootWatchdogSec=1min\n";
+
+	write_file_str("/proc/sys/kernel/panic_on_rcu_stall", "1\n");
+	mkdir_p("/newroot/etc/systemd/system.conf.d");
+	write_newroot_file("/newroot/etc/systemd/system.conf.d/99-lemonades-watchdog.conf",
+			   wdt_conf, sizeof(wdt_conf) - 1);
+	log_kmsg("lemonades-init: QCOM WDT + panic_on_rcu_stall=1 ensured\n");
+}
+
 static int try_switch_root(void)
 {
 	static const char *const parts[] = {"denial", "linux", "userdata"};
@@ -856,6 +871,7 @@ static int try_switch_root(void)
 	ensure_subid_ranges();
 	ensure_audio_config();
 	ensure_charge_limit_app();
+	ensure_watchdog_and_recovery();
 
 	/* Merge /lib/firmware (initramfs) + /newroot/usr/lib/firmware via read-only overlay */
 	if (access("/newroot/usr/lib/firmware", F_OK) == 0) {
